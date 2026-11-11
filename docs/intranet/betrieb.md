@@ -1,0 +1,137 @@
+# Betrieb
+
+## 1. Image bauen
+
+Das Image enthält die gebaute App und den Server (eine Datei, keine `node_modules`). Gebaut wird im Wurzelverzeichnis des Repos:
+
+```bash
+docker build -f deploy/docker/Dockerfile -t registry.intranet.example/excalidraw-intranet:0.1.0 .
+```
+
+Ohne Internetzugang im Build zeigen Basis-Images und npm auf interne Spiegel:
+
+```bash
+docker build -f deploy/docker/Dockerfile \
+  --build-arg BUILD_IMAGE=registry.intranet.example/node:24-bookworm-slim \
+  --build-arg RUNTIME_IMAGE=registry.intranet.example/node:24-bookworm-slim \
+  --build-arg NPM_REGISTRY=https://nexus.intranet.example/repository/npm/ \
+  -t registry.intranet.example/excalidraw-intranet:0.1.0 .
+```
+
+Der Container läuft als Benutzer `node` (UID 1000) auf Port 8080 und braucht kein beschreibbares Dateisystem.
+
+## 2. Keycloak einrichten
+
+In der Admin-Konsole von Keycloak im gewünschten Realm:
+
+1. **Clients → Create client**: Typ _OpenID Connect_, Client-ID `excalidraw`.
+2. **Capability config**: _Client authentication_ an, _Standard flow_ an, _Direct access grants_ aus.
+3. **Login settings** (Beispiel-Domain ersetzen):
+   - Valid redirect URIs: `https://excalidraw.intranet.example/api/auth/callback`
+   - Valid post logout redirect URIs: `https://excalidraw.intranet.example/*`
+   - Web origins: `https://excalidraw.intranet.example`
+4. **Advanced → Proof Key for Code Exchange**: `S256`.
+5. **Logout settings**: _Front channel logout_ aus, _Backchannel logout URL_ `https://excalidraw.intranet.example/api/auth/backchannel-logout` (muss von Keycloak aus erreichbar sein), _Backchannel logout session required_ an.
+6. **Credentials**: Client-Secret kopieren (für das Kubernetes-Secret).
+7. **Roles** (Client-Rollen): `excalidraw-admin` und `excalidraw-user` anlegen und Gruppen zuweisen, z. B. allen Mitarbeitenden `excalidraw-user`.
+8. **Gruppen im Token**: _Client scopes → excalidraw-dedicated → Add mapper → By configuration → Group Membership_, Token Claim Name `groups`, _Full group path_ an, in ID-Token, Access-Token und Userinfo.
+
+Soll nur ein Teil der Belegschaft Zugriff haben, `OIDC_REQUIRED_ROLE=excalidraw-user` setzen. Wer die Rolle nicht hat, sieht nach dem Login einen Hinweis statt der App.
+
+## 3. Mit Helm installieren
+
+Secrets vorab anlegen (empfohlen statt Klartext in den Values):
+
+```bash
+kubectl create secret generic excalidraw-oidc \
+  --from-literal=oidc-client-secret='<Client-Secret aus Keycloak>'
+kubectl create secret generic excalidraw-db \
+  --from-literal=database-url='postgres://excalidraw:<Passwort>@postgres.db.svc:5432/excalidraw?sslmode=require'
+```
+
+`values-intranet.yaml`:
+
+```yaml
+image:
+  repository: registry.intranet.example/excalidraw-intranet
+  tag: "0.1.0"
+
+publicUrl: https://excalidraw.intranet.example
+
+oidc:
+  issuerUrl: https://sso.intranet.example/realms/company
+  clientId: excalidraw
+  existingSecret: excalidraw-oidc
+  requiredRole: excalidraw-user
+
+database:
+  existingSecret: excalidraw-db
+
+ingress:
+  className: nginx
+  tls:
+    secretName: excalidraw-tls
+
+# interne CA für TLS zu Keycloak, PostgreSQL und S3
+extraCaCerts:
+  configMap: corporate-ca
+  key: ca.crt
+```
+
+```bash
+helm upgrade --install excalidraw deploy/helm/excalidraw -f values-intranet.yaml
+```
+
+Hinweise:
+
+- Die Datenbank wird beim Start automatisch migriert (`AUTO_MIGRATE`); mehrere Pods sperren sich dabei gegenseitig.
+- Bei mehr als einem Pod schaltet das Chart `REALTIME_CLUSTER` ein, damit Live-Sitzungen über Pods hinweg funktionieren. Websockets brauchen am Ingress lange Timeouts (sind für ingress-nginx voreingestellt).
+- `postgresql.enabled: true` startet eine einfache Datenbank im Cluster, nur für Testumgebungen.
+- Bilder liegen standardmäßig in PostgreSQL. Für S3-kompatiblen Speicher `storage.driver: s3` und `storage.s3.*` setzen.
+
+## 4. Konfiguration (Server)
+
+Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. Fehlen Pflichtangaben, startet der Server nicht und nennt alle fehlenden Variablen.
+
+| Variable | Standard | Bedeutung |
+| --- | --- | --- |
+| `PUBLIC_URL` | – (Pflicht) | Externe Adresse, nur Origin, z. B. `https://excalidraw.intranet.example` |
+| `DATABASE_URL` | – (Pflicht) | PostgreSQL-Verbindung (`postgres://…`, `?sslmode=require` für TLS) |
+| `DATABASE_POOL_SIZE` | `10` | Datenbankverbindungen pro Pod |
+| `AUTO_MIGRATE` | `true` | Schema beim Start aktualisieren |
+| `OIDC_ISSUER_URL` | – (Pflicht) | Realm-URL, z. B. `https://sso.intranet.example/realms/company` |
+| `OIDC_CLIENT_ID` | – (Pflicht) | Client-ID in Keycloak |
+| `OIDC_CLIENT_SECRET` | – | Secret des vertraulichen Clients |
+| `OIDC_SCOPES` | `openid profile email` | Angefragte Scopes |
+| `OIDC_ROLES_CLAIMS` | Realm- und Client-Rollen | Claim-Pfade mit Rollen, durch Komma getrennt |
+| `OIDC_GROUPS_CLAIM` | `groups` | Claim mit den Gruppen |
+| `OIDC_ADMIN_ROLE` | `excalidraw-admin` | Rolle für Admin-Rechte |
+| `OIDC_REQUIRED_ROLE` | leer | Rolle, ohne die niemand hineinkommt; leer = alle |
+| `OIDC_POST_LOGOUT_REDIRECT_URL` | `PUBLIC_URL` | Ziel nach dem Abmelden |
+| `OIDC_ALLOW_INSECURE_HTTP` | `false` | Keycloak über http (nur Entwicklung) |
+| `SESSION_TTL_HOURS` | `10` | Lebensdauer einer Sitzung |
+| `SESSION_COOKIE_NAME` | `excalidraw_session` | Name des Sitzungs-Cookies |
+| `STORAGE_DRIVER` | `postgres` | `postgres` oder `s3` für Bilder |
+| `S3_ENDPOINT`, `S3_BUCKET` | – | S3-Ziel (bei `s3` Pflicht) |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | – | S3-Zugang (bei `s3` Pflicht) |
+| `S3_REGION`, `S3_FORCE_PATH_STYLE`, `S3_PREFIX` | `us-east-1`, `true`, leer | S3-Details |
+| `MAX_FILE_SIZE_MB` | `25` | Größte Bilddatei (verschlüsselt) |
+| `MAX_IMAGE_DIMENSION` | `3840` | Längste Bildseite in Pixeln (4K) |
+| `MAX_SCENE_SIZE_MB`, `MAX_SHARE_LINK_SIZE_MB` | `50` | Größte Szene bzw. Teilen-Link |
+| `REALTIME_CLUSTER` | `false` | Live-Sitzungen über mehrere Pods (PostgreSQL) |
+| `REALTIME_MAX_PAYLOAD_MB` | `50` | Größte Websocket-Nachricht |
+| `STATIC_DIR` | im Image gesetzt | Verzeichnis der gebauten App; leer = nur API |
+| `CSP_FRAME_SRC` | leer | Zusätzliche Origins für eingebettete Inhalte |
+| `CSP_FRAME_ANCESTORS` | leer | Origins, die Excalidraw einbetten dürfen |
+| `LIBRARY_BROWSE_URL` | leer | Interner Bibliothekskatalog (später) |
+| `TRUST_PROXY` | `1` | Vertrauenswürdige Proxy-Hops vor dem Pod |
+| `PORT`, `HOST` | `8080`, `0.0.0.0` | Adresse des Servers |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `NODE_EXTRA_CA_CERTS` | – | PEM-Datei der internen CA (Node.js-Standard) |
+
+## 5. Laufender Betrieb
+
+- **Health**: `GET /healthz` (Prozess lebt), `GET /readyz` (Datenbank und Speicher erreichbar). Ein Ausfall von Keycloak nimmt Pods nicht aus dem Dienst; laufende Sitzungen arbeiten weiter, neue Anmeldungen schlagen fehl.
+- **Logs**: JSON-Zeilen auf stdout, Cookies und Authorization-Header werden geschwärzt.
+- **Backup**: alles Wichtige liegt in PostgreSQL (bei `STORAGE_DRIVER=s3` zusätzlich der Bucket). Ein `pg_dump` der Datenbank genügt für Phase 1.
+- **Updates**: Image-Tag erhöhen und `helm upgrade`; Migrationen laufen beim Start.

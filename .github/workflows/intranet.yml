@@ -1,0 +1,56 @@
+name: Intranet
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  server:
+    name: Server, app build and browser tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: excalidraw_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
+
+
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/excalidraw_test
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.x
+      - name: Install
+        run: yarn --frozen-lockfile
+      - name: Typecheck and test the server
+        run: |
+          yarn --cwd excalidraw-server typecheck
+          yarn --cwd excalidraw-server test
+          yarn --cwd excalidraw-server build
+      - name: Build the app
+        run: yarn build:app:docker
+      - name: Browser end-to-end test
+        run: |
+          npx playwright install --with-deps chromium
+          yarn --cwd excalidraw-server e2e
+
+  deploy:
+    name: Docker image and Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Build the image
+        run: docker build -f deploy/docker/Dockerfile -t excalidraw-intranet .
+      - name: Lint the Helm chart
+        run: >-
+          docker run --rm -v "$PWD/deploy/helm:/charts" -w /charts alpine/helm:3.19.0 lint excalidraw --set oidc.issuerUrl=https://sso.example/realms/company --set oidc.clientSecret=test --set database.url=postgres://user:pass@db:5432/excalidraw
+

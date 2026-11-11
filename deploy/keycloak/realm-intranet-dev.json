@@ -22,9 +22,15 @@
   "groups": [
     {
       "name": "IT",
-      "subGroups": [{ "name": "Architektur" }]
+      "subGroups": [
+        {
+          "name": "Architektur"
+        }
+      ]
     },
-    { "name": "Vertrieb" }
+    {
+      "name": "Vertrieb"
+    }
   ],
   "clients": [
     {
@@ -40,11 +46,11 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "frontchannelLogout": false,
-      "redirectUris": ["http://localhost:3000/api/auth/callback"],
-      "webOrigins": ["http://localhost:3000"],
+      "redirectUris": ["http://localhost:3000/api/auth/callback", "http://localhost:3001/api/auth/callback"],
+      "webOrigins": ["http://localhost:3000", "http://localhost:3001"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:3000/*",
+        "post.logout.redirect.uris": "http://localhost:3000/*##http://localhost:3001/*",
         "backchannel.logout.url": "http://localhost:3000/api/auth/backchannel-logout",
         "backchannel.logout.session.required": "true",
         "backchannel.logout.revoke.offline.tokens": "false"
@@ -74,7 +80,13 @@
       "emailVerified": true,
       "firstName": "Alice",
       "lastName": "Admin",
-      "credentials": [{ "type": "password", "value": "alice", "temporary": false }],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice",
+          "temporary": false
+        }
+      ],
       "clientRoles": {
         "excalidraw": ["excalidraw-admin", "excalidraw-user"]
       },
@@ -87,8 +99,16 @@
       "emailVerified": true,
       "firstName": "Bob",
       "lastName": "Beispiel",
-      "credentials": [{ "type": "password", "value": "bob", "temporary": false }],
-      "clientRoles": { "excalidraw": ["excalidraw-user"] },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "excalidraw": ["excalidraw-user"]
+      },
       "groups": ["/Vertrieb"]
     },
     {
@@ -98,7 +118,13 @@
       "emailVerified": true,
       "firstName": "Carol",
       "lastName": "Ohnerolle",
-      "credentials": [{ "type": "password", "value": "carol", "temporary": false }]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "carol",
+          "temporary": false
+        }
+      ]
     }
   ]
 }
