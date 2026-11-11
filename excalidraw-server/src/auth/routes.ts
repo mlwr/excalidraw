@@ -81,7 +81,11 @@ export const registerAuth = (app: FastifyInstance, ctx: AppContext) => {
   // resolve the session for every API request; routes decide whether they
   // need it (requireAuth) or not
   app.addHook("onRequest", async (request) => {
-    if (!request.url.startsWith("/api/")) {
+    // the REST API takes API tokens only (see auth/tokens.ts)
+    if (
+      !request.url.startsWith("/api/") ||
+      request.url.startsWith("/api/v1/")
+    ) {
       return;
     }
     request.auth = await sessions.resolve(request.cookies[cookieName]);

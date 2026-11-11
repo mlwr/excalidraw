@@ -9,3 +9,7 @@ packages/excalidraw/types
 examples/**/public
 dev-dist
 coverage
+
+# intranet fork: generated
+excalidraw-server/vendor/*.mjs
+excalidraw-server/elements/fontWidths.json

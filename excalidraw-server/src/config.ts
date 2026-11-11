@@ -80,6 +80,18 @@ export interface Config {
   libraryBrowseUrl: string | null;
   /** 32-byte master key that encrypts the per-scene keys */
   dataEncryptionKey: Buffer;
+  api: {
+    /** REST API under /api/v1 and personal API tokens */
+    enabled: boolean;
+    /** MCP server under /mcp (needs the API) */
+    mcpEnabled: boolean;
+    /** longest lifetime of a token */
+    tokenMaxDays: number;
+    /** role needed to create and use tokens; null = everyone */
+    requiredRole: string | null;
+    /** requests per token and minute */
+    rateLimitPerMinute: number;
+  };
   logLevel: string;
 }
 
@@ -307,6 +319,23 @@ export const loadConfig = (env: Env = process.env): Config => {
     cspFrameAncestors: splitList(env.CSP_FRAME_ANCESTORS),
     libraryBrowseUrl: env.LIBRARY_BROWSE_URL?.trim() || null,
     dataEncryptionKey: parseEncryptionKey(env.DATA_ENCRYPTION_KEY, errors),
+    api: {
+      enabled: parseBool(env.API_ENABLED, true),
+      mcpEnabled:
+        parseBool(env.API_ENABLED, true) && parseBool(env.MCP_ENABLED, true),
+      tokenMaxDays: Math.round(
+        parseNumber("API_TOKEN_MAX_DAYS", env.API_TOKEN_MAX_DAYS, 365, errors),
+      ),
+      requiredRole: env.API_REQUIRED_ROLE?.trim() || null,
+      rateLimitPerMinute: Math.round(
+        parseNumber(
+          "API_RATE_LIMIT_PER_MINUTE",
+          env.API_RATE_LIMIT_PER_MINUTE,
+          300,
+          errors,
+        ),
+      ),
+    },
     logLevel: env.LOG_LEVEL || "info",
   };
 

@@ -2,13 +2,19 @@ import { sql } from "kysely";
 
 import { randomToken, sha256 } from "../util/crypto.js";
 
-import type { Database, Session, User } from "../db/schema.js";
+import type { ApiToken, Database, Session, User } from "../db/schema.js";
 import type { Kysely } from "kysely";
 
 export interface AuthContext {
   user: User;
-  session: Session;
+  /** the browser session; null for requests with an API token */
+  session: Session | null;
+  /** the API token (REST API, MCP server) */
+  token?: ApiToken;
 }
+
+/** the auth context of a browser session */
+export type SessionAuth = AuthContext & { session: Session };
 
 // don't write last_seen_at on every request
 const TOUCH_INTERVAL_MS = 5 * 60 * 1000;
@@ -41,7 +47,7 @@ export class SessionStore {
     return token;
   }
 
-  async resolve(token: string | undefined): Promise<AuthContext | null> {
+  async resolve(token: string | undefined): Promise<SessionAuth | null> {
     if (!token || token.length > 256) {
       return null;
     }

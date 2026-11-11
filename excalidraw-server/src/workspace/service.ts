@@ -1,0 +1,594 @@
+/**
+ * Workspace operations for the REST API (/api/v1) and the MCP server: the
+ * same access model as the browser routes (workspace/access.ts), but errors
+ * are thrown as HttpError instead of written to a reply.
+ */
+import { sql } from "kysely";
+
+import {
+  generateSceneKey,
+  openSceneKey,
+  randomToken,
+  sealSceneKey,
+} from "../util/crypto.js";
+import { HttpError } from "../util/http.js";
+import { containsPattern, singleLine } from "../util/validate.js";
+
+import {
+  accessibleCollections,
+  atLeast,
+  collectionRole,
+  grantMatches,
+  sceneAccess,
+} from "./access.js";
+import {
+  decodeFile,
+  decryptElements,
+  encodeFile,
+  encryptElements,
+  sceneVersionOf,
+} from "./content.js";
+
+import type { AppContext } from "../context.js";
+import type { Collection, Scene } from "../db/schema.js";
+import type { Actor, Role, SceneAccess } from "./access.js";
+import type { Change, SceneElement } from "../../vendor/elements.mjs";
+
+export const SCENE_ID_RE = /^[a-zA-Z0-9_-]{8,64}$/;
+export const FILE_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_NAME_LENGTH = 200;
+const MAX_SAVE_ATTEMPTS = 5;
+
+/** image types the editor accepts as files */
+export const IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/svg+xml",
+]);
+
+export const notFound = (what = "Szene") =>
+  new HttpError(404, "not_found", `${what} nicht gefunden oder kein Zugriff.`);
+const forbidden = () =>
+  new HttpError(403, "forbidden", "Dafür fehlen dir die Rechte.");
+
+export const cleanName = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const name = singleLine(value).replace(/\s+/g, " ").trim();
+  return name && name.length <= MAX_NAME_LENGTH ? name : null;
+};
+
+export interface SceneFile {
+  id: string;
+  mimeType: string;
+  dataURL: string;
+  created: number;
+}
+
+export type SceneSort = "updated" | "created" | "name";
+
+export const createWorkspaceService = (ctx: AppContext) => {
+  const { db, config, blobs } = ctx;
+  const masterKey = config.dataEncryptionKey;
+
+  const defaultWorkspaceId = async () =>
+    (
+      await db
+        .selectFrom("workspaces")
+        .select("id")
+        .where("slug", "=", "default")
+        .executeTakeFirstOrThrow()
+    ).id;
+
+  const ensurePersonalCollection = async (userId: string) => {
+    await db
+      .insertInto("collections")
+      .values({
+        workspace_id: await defaultWorkspaceId(),
+        name: "Meine Szenen",
+        kind: "personal",
+        owner_id: userId,
+        created_by: userId,
+      })
+      .onConflict((oc) =>
+        oc.column("owner_id").where("kind", "=", "personal").doNothing(),
+      )
+      .execute();
+    return db
+      .selectFrom("collections")
+      .selectAll()
+      .where("kind", "=", "personal")
+      .where("owner_id", "=", userId)
+      .executeTakeFirstOrThrow();
+  };
+
+  const collectionFor = async (
+    actor: Actor,
+    collectionId: string,
+    minimum: Role,
+  ) => {
+    if (!UUID_RE.test(collectionId)) {
+      throw notFound("Collection");
+    }
+    const collection = await db
+      .selectFrom("collections")
+      .selectAll()
+      .where("id", "=", collectionId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!collection) {
+      throw notFound("Collection");
+    }
+    const role = await collectionRole(db, actor, collection);
+    if (role === "none") {
+      throw notFound("Collection");
+    }
+    if (!atLeast(role, minimum)) {
+      throw forbidden();
+    }
+    return { collection, role };
+  };
+
+  const sceneFor = async (
+    actor: Actor,
+    sceneId: string,
+    minimum: Role,
+  ): Promise<SceneAccess> => {
+    if (typeof sceneId !== "string" || !SCENE_ID_RE.test(sceneId)) {
+      throw notFound();
+    }
+    const access = await sceneAccess(db, actor, sceneId);
+    if (!access || access.role === "none") {
+      throw notFound();
+    }
+    if (!atLeast(access.role, minimum)) {
+      throw forbidden();
+    }
+    return access;
+  };
+
+  const userNames = async (ids: (string | null)[]) => {
+    const unique = [...new Set(ids.filter((id): id is string => !!id))];
+    if (!unique.length) {
+      return new Map<string, string>();
+    }
+    const rows = await db
+      .selectFrom("users")
+      .select(["id", "name"])
+      .where("id", "in", unique)
+      .execute();
+    return new Map(rows.map((row) => [row.id, row.name]));
+  };
+
+  const sceneUrl = (sceneId: string) =>
+    new URL(`/s/${sceneId}`, config.publicUrl).toString();
+
+  /** what clients of the API see of a scene */
+  const describeScenes = async (
+    items: {
+      scene: Scene;
+      collection: Collection;
+      role: Role;
+      canManage: boolean;
+    }[],
+  ) => {
+    const names = await userNames(
+      items.flatMap(({ scene }) => [scene.created_by, scene.updated_by]),
+    );
+    const person = (id: string | null) =>
+      id ? { id, name: names.get(id) || null } : null;
+    return items.map(({ scene, collection, role, canManage }) => ({
+      id: scene.id,
+      name: scene.name,
+      url: sceneUrl(scene.id),
+      collection: {
+        id: collection.id,
+        name: collection.name,
+        kind: collection.kind,
+      },
+      createdAt: scene.created_at,
+      updatedAt: scene.updated_at,
+      createdBy: person(scene.created_by),
+      updatedBy: person(scene.updated_by),
+      revision: Number(scene.revision),
+      role: role === "manager" ? "editor" : role,
+      canManage,
+      hasReadLink: !!scene.read_link_token,
+    }));
+  };
+
+  const describeAccess = async (access: SceneAccess) =>
+    (
+      await describeScenes([
+        {
+          scene: access.scene,
+          collection: access.collection,
+          role: access.role,
+          canManage: access.canManage,
+        },
+      ])
+    )[0];
+
+  const listCollections = async (actor: Actor) => {
+    await ensurePersonalCollection(actor.id);
+    const collections = await accessibleCollections(db, actor);
+    const counts = await db
+      .selectFrom("scenes")
+      .select(["collection_id", sql<number>`count(*)::int`.as("count")])
+      .where(
+        "collection_id",
+        "in",
+        collections.map((item) => item.collection.id),
+      )
+      .where("deleted_at", "is", null)
+      .groupBy("collection_id")
+      .execute();
+    const countMap = new Map(
+      counts.map((row) => [row.collection_id, row.count]),
+    );
+    return collections.map(({ collection, role }) => ({
+      id: collection.id,
+      name: collection.name,
+      kind: collection.kind,
+      role,
+      sceneCount: countMap.get(collection.id) || 0,
+    }));
+  };
+
+  /** scenes in the actor's collections and scenes shared with them directly */
+  const listScenes = async (
+    actor: Actor,
+    options: {
+      collectionId?: string;
+      query?: string;
+      sort?: SceneSort;
+      limit: number;
+      offset: number;
+    },
+  ) => {
+    let collectionIds: string[];
+    if (options.collectionId) {
+      const { collection } = await collectionFor(
+        actor,
+        options.collectionId,
+        "viewer",
+      );
+      collectionIds = [collection.id];
+    } else {
+      await ensurePersonalCollection(actor.id);
+      collectionIds = (await accessibleCollections(db, actor)).map(
+        (item) => item.collection.id,
+      );
+    }
+
+    let base = db
+      .selectFrom("scenes")
+      .where("deleted_at", "is", null)
+      .where((eb) =>
+        options.collectionId
+          ? eb("collection_id", "in", collectionIds)
+          : eb.or([
+              eb("collection_id", "in", collectionIds),
+              eb.exists(
+                eb
+                  .selectFrom("scene_grants")
+                  .select(sql`1`.as("one"))
+                  .whereRef("scene_grants.scene_id", "=", "scenes.id")
+                  .where(grantMatches(actor)),
+              ),
+            ]),
+      );
+    if (options.query) {
+      base = base.where("name", "ilike", containsPattern(options.query));
+    }
+    const { total } = await base
+      .select(sql<number>`count(*)::int`.as("total"))
+      .executeTakeFirstOrThrow();
+    const column =
+      options.sort === "name"
+        ? "name"
+        : options.sort === "created"
+        ? "created_at"
+        : "updated_at";
+    const rows = await base
+      .selectAll()
+      .orderBy(column, options.sort === "name" ? "asc" : "desc")
+      .orderBy("id")
+      .limit(options.limit)
+      .offset(options.offset)
+      .execute();
+
+    const items = [];
+    for (const row of rows) {
+      const access = await sceneAccess(db, actor, row.id);
+      if (access && access.role !== "none") {
+        items.push({
+          scene: access.scene,
+          collection: access.collection,
+          role: access.role,
+          canManage: access.canManage,
+        });
+      }
+    }
+    return { total, scenes: await describeScenes(items) };
+  };
+
+  const createScene = async (
+    actor: Actor,
+    input: { name?: string | null; collectionId?: string | null },
+  ) => {
+    const collectionId =
+      input.collectionId || (await ensurePersonalCollection(actor.id)).id;
+    const { collection } = await collectionFor(actor, collectionId, "editor");
+    const key = generateSceneKey();
+    const scene = await db
+      .insertInto("scenes")
+      .values({
+        id: randomToken(12),
+        workspace_id: collection.workspace_id,
+        collection_id: collection.id,
+        name: input.name || "Unbenannte Szene",
+        created_by: actor.id,
+        updated_by: actor.id,
+        key_sealed: sealSceneKey(masterKey, key),
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    return { scene, key, collection };
+  };
+
+  const updateScene = async (
+    actor: Actor,
+    sceneId: string,
+    input: { name?: unknown; collectionId?: unknown },
+  ) => {
+    const access = await sceneFor(actor, sceneId, "editor");
+    const changes: { name?: string; collection_id?: string } = {};
+    if (input.name !== undefined) {
+      const name = cleanName(input.name);
+      if (!name) {
+        throw new HttpError(400, "invalid_name", "Bitte einen Namen angeben.");
+      }
+      changes.name = name;
+    }
+    if (input.collectionId !== undefined) {
+      if (!access.canManage) {
+        throw forbidden();
+      }
+      const target = await collectionFor(
+        actor,
+        String(input.collectionId),
+        "editor",
+      );
+      changes.collection_id = target.collection.id;
+    }
+    if (!Object.keys(changes).length) {
+      throw new HttpError(400, "nothing_to_change", "Nichts zu ändern.");
+    }
+    await db
+      .updateTable("scenes")
+      .set({ ...changes, updated_at: sql`now()` })
+      .where("id", "=", access.scene.id)
+      .execute();
+    if (
+      changes.collection_id &&
+      changes.collection_id !== access.scene.collection_id
+    ) {
+      await ctx.realtime.recheckScenes([access.scene.id]).catch(() => {});
+    }
+    return describeAccess(await sceneFor(actor, sceneId, "viewer"));
+  };
+
+  const deleteScene = async (actor: Actor, sceneId: string) => {
+    const access = await sceneFor(actor, sceneId, "viewer");
+    if (!access.canManage) {
+      throw forbidden();
+    }
+    await db
+      .updateTable("scenes")
+      .set({ deleted_at: sql`now()` })
+      .where("id", "=", access.scene.id)
+      .execute();
+    ctx.realtime.closeSceneRoom(access.scene.id);
+  };
+
+  const keyOf = (scene: Scene) => openSceneKey(masterKey, scene.key_sealed);
+
+  const elementsOf = (scene: Scene, key: string): SceneElement[] =>
+    Number(scene.revision) === 0 || !scene.iv || !scene.ciphertext
+      ? []
+      : decryptElements(key, scene.iv, scene.ciphertext);
+
+  const readContent = (access: SceneAccess) => {
+    const key = keyOf(access.scene);
+    return {
+      key,
+      elements: elementsOf(access.scene, key),
+      revision: Number(access.scene.revision),
+    };
+  };
+
+  /**
+   * Change a scene's elements: read, change, write with the revision read
+   * (others may save at the same time: then read again and redo the change),
+   * then show the change in every open editor.
+   */
+  const changeContent = async (
+    actor: Actor,
+    sceneId: string,
+    change: (elements: SceneElement[]) => Change,
+    options: { expectedRevision?: number | null } = {},
+  ) => {
+    for (let attempt = 0; attempt < MAX_SAVE_ATTEMPTS; attempt++) {
+      const access = await sceneFor(actor, sceneId, "editor");
+      const { key, elements, revision } = readContent(access);
+      if (
+        options.expectedRevision != null &&
+        options.expectedRevision !== revision
+      ) {
+        throw new HttpError(
+          409,
+          "conflict",
+          `Die Szene wurde inzwischen geändert (Revision ${revision}).`,
+          { revision },
+        );
+      }
+      const result = change(elements);
+      if (!result.changed.length) {
+        return { ...result, revision };
+      }
+      const json = Buffer.byteLength(JSON.stringify(result.elements));
+      if (json > config.limits.maxSceneBytes) {
+        throw new HttpError(413, "scene_too_large", "Die Szene ist zu groß.");
+      }
+      const { iv, data } = encryptElements(key, result.elements);
+      const updated = await db
+        .updateTable("scenes")
+        .set({
+          scene_version: sceneVersionOf(result.elements),
+          revision: sql`revision + 1`,
+          iv,
+          ciphertext: data,
+          updated_by: actor.id,
+          updated_at: sql`now()`,
+        })
+        .where("id", "=", access.scene.id)
+        .where("revision", "=", String(revision))
+        .returning("revision")
+        .executeTakeFirst();
+      if (!updated) {
+        continue;
+      }
+      ctx.realtime.broadcastSceneUpdate(access.scene.id, key, result.changed);
+      return { ...result, revision: Number(updated.revision) };
+    }
+    throw new HttpError(
+      409,
+      "conflict",
+      "Die Szene wird gerade zu oft gleichzeitig geändert. Bitte erneut versuchen.",
+    );
+  };
+
+  const fileKey = (sceneId: string, fileId: string) =>
+    `files/scenes/${sceneId}/${fileId}`;
+
+  /** image files of the scene (data URLs), for export */
+  const readFiles = async (
+    sceneId: string,
+    key: string,
+    elements: readonly SceneElement[],
+  ) => {
+    const ids = new Set(
+      elements
+        .filter(
+          (element) =>
+            element.type === "image" &&
+            !element.isDeleted &&
+            typeof element.fileId === "string" &&
+            FILE_ID_RE.test(element.fileId),
+        )
+        .map((element) => element.fileId as string),
+    );
+    const files: Record<string, SceneFile> = {};
+    for (const id of ids) {
+      const stored = await blobs.get(fileKey(sceneId, id));
+      if (!stored) {
+        continue;
+      }
+      try {
+        const { metadata, dataURL } = decodeFile(key, stored.data);
+        files[id] = {
+          id,
+          mimeType: metadata.mimeType,
+          dataURL,
+          created: metadata.created,
+        };
+      } catch {
+        // unreadable file: leave it out like a missing one
+      }
+    }
+    return files;
+  };
+
+  /** store image files that come with imported elements (data URLs) */
+  const storeFiles = async (
+    sceneId: string,
+    key: string,
+    files: unknown,
+    userId: string,
+  ) => {
+    if (files === undefined || files === null) {
+      return 0;
+    }
+    if (typeof files !== "object" || Array.isArray(files)) {
+      throw new HttpError(400, "invalid_files", "files muss ein Objekt sein.");
+    }
+    let stored = 0;
+    for (const [id, value] of Object.entries(files as Record<string, any>)) {
+      const mimeType = value?.mimeType;
+      const dataURL = value?.dataURL;
+      const match =
+        typeof dataURL === "string"
+          ? /^data:([\w.+/-]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataURL)
+          : null;
+      if (
+        !FILE_ID_RE.test(id) ||
+        !IMAGE_MIME_TYPES.has(mimeType) ||
+        !match ||
+        match[1] !== mimeType
+      ) {
+        throw new HttpError(
+          400,
+          "invalid_file",
+          `Datei ${id.slice(
+            0,
+            64,
+          )}: erwartet wird ein Bild als data-URL (png, jpeg, gif, webp, svg).`,
+        );
+      }
+      if ((match[2].length * 3) / 4 > config.limits.maxFileBytes) {
+        throw new HttpError(413, "file_too_large", `Datei ${id} ist zu groß.`);
+      }
+      const created = await blobs.putIfAbsent(
+        fileKey(sceneId, id),
+        encodeFile(
+          key,
+          {
+            id,
+            mimeType,
+            created: Number(value?.created) || Date.now(),
+            lastRetrieved: Date.now(),
+          },
+          dataURL,
+        ),
+        { contentType: "application/octet-stream", createdBy: userId },
+      );
+      stored += created ? 1 : 0;
+    }
+    return stored;
+  };
+
+  return {
+    ensurePersonalCollection,
+    collectionFor,
+    sceneFor,
+    sceneUrl,
+    describeAccess,
+    listCollections,
+    listScenes,
+    createScene,
+    updateScene,
+    deleteScene,
+    readContent,
+    changeContent,
+    readFiles,
+    storeFiles,
+  };
+};
+
+export type WorkspaceService = ReturnType<typeof createWorkspaceService>;

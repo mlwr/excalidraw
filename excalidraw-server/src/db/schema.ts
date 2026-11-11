@@ -167,6 +167,70 @@ export interface SceneLinkViewersTable {
   created_at: Timestamp;
 }
 
+export type TokenScope = "read" | "write";
+
+export interface ApiTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  name: string;
+  token_hash: string;
+  token_hint: string;
+  scope: TokenScope;
+  created_at: Timestamp;
+  last_used_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+  expires_at: ColumnType<Date, Date | string, Date | string>;
+  revoked_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+}
+
+export interface CommentThreadsTable {
+  id: Generated<string>;
+  scene_id: string;
+  x: number;
+  y: number;
+  element_id: string | null;
+  created_by: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  resolved_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+  resolved_by: string | null;
+  deleted_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+}
+
+export interface CommentsTable {
+  id: Generated<string>;
+  thread_id: string;
+  author_id: string | null;
+  body: Buffer;
+  mentions: ColumnType<string[], string[] | undefined, string[]>;
+  created_at: Timestamp;
+  edited_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+  deleted_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+}
+
 export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
@@ -181,6 +245,9 @@ export interface Database {
   scene_grants: SceneGrantsTable;
   scene_visits: SceneVisitsTable;
   scene_link_viewers: SceneLinkViewersTable;
+  api_tokens: ApiTokensTable;
+  comment_threads: CommentThreadsTable;
+  comments: CommentsTable;
 }
 
 export type User = Selectable<UsersTable>;
@@ -188,3 +255,6 @@ export type NewUser = Insertable<UsersTable>;
 export type Session = Selectable<SessionsTable>;
 export type Collection = Selectable<CollectionsTable>;
 export type Scene = Selectable<ScenesTable>;
+export type ApiToken = Selectable<ApiTokensTable>;
+export type CommentThread = Selectable<CommentThreadsTable>;
+export type Comment = Selectable<CommentsTable>;

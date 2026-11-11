@@ -5,6 +5,8 @@ export class HttpError extends Error {
     public readonly statusCode: number,
     public readonly code: string,
     message?: string,
+    /** more fields for the JSON body */
+    public readonly extra?: Record<string, unknown>,
   ) {
     super(message || code);
   }

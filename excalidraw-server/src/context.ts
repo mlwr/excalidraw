@@ -18,6 +18,17 @@ export interface RealtimeHooks {
    * editor is disconnected and reloads the scene
    */
   recheckScenes: (sceneIds: string[]) => Promise<void>;
+  /**
+   * show elements changed on the server (REST API, MCP) in every editor that
+   * has the scene open, like a collaborator's change
+   */
+  broadcastSceneUpdate: (
+    sceneId: string,
+    sceneKey: string,
+    elements: readonly unknown[],
+  ) => void;
+  /** tell open editors that the scene's comments changed */
+  notifyComments: (sceneId: string) => void;
 }
 
 export interface AppContext {
@@ -42,6 +53,10 @@ export const clientConfig = (config: Config) => ({
   ai: { enabled: false },
   libraries: { browseUrl: config.libraryBrowseUrl },
   workspace: { enabled: true },
+  api: {
+    enabled: config.api.enabled,
+    mcpEnabled: config.api.mcpEnabled,
+  },
 });
 
 export type ClientConfig = ReturnType<typeof clientConfig>;

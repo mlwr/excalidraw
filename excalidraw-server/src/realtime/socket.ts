@@ -3,6 +3,8 @@ import { createDecipheriv } from "node:crypto";
 import { createAdapter } from "@socket.io/postgres-adapter";
 import { Server } from "socket.io";
 
+import { encryptForBrowser } from "../workspace/content.js";
+
 import type { SessionStore } from "../auth/sessions.js";
 import type { Config } from "../config.js";
 import type { RealtimeHooks } from "../context.js";
@@ -411,6 +413,26 @@ export const attachRealtime = (
     },
     closeSceneRoom: (sceneId) => {
       io.in(`${SCENE_ROOM_PREFIX}${sceneId}`).disconnectSockets(true);
+    },
+    broadcastSceneUpdate: (sceneId, sceneKey, elements) => {
+      if (!elements.length) {
+        return;
+      }
+      // the server speaks as a collaborator: an encrypted SCENE_UPDATE
+      const { iv, data } = encryptForBrowser(
+        sceneKey,
+        Buffer.from(
+          JSON.stringify({ type: "SCENE_UPDATE", payload: { elements } }),
+        ),
+      );
+      io.to(`${SCENE_ROOM_PREFIX}${sceneId}`).emit(
+        "client-broadcast",
+        data,
+        iv,
+      );
+    },
+    notifyComments: (sceneId) => {
+      io.to(`${SCENE_ROOM_PREFIX}${sceneId}`).emit("comments-changed");
     },
     recheckScenes: async (sceneIds) => {
       const rooms = new Set(sceneIds.map((id) => `${SCENE_ROOM_PREFIX}${id}`));

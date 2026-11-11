@@ -14,8 +14,19 @@ import { registerDataRoutes } from "./routes/data.js";
 import { registerStatic } from "./routes/static.js";
 import { createBlobStore } from "./storage/index.js";
 import { openSceneKey } from "./util/crypto.js";
+import { HttpError, sendError } from "./util/http.js";
 import { actorOf, sceneAccess } from "./workspace/access.js";
 import { registerWorkspaceRoutes } from "./workspace/routes.js";
+import { createSceneOperations } from "./api/operations.js";
+import {
+  registerApiRoutes,
+  registerCommentRoutes,
+  registerTokenRoutes,
+} from "./api/routes.js";
+import { createRequireToken, TokenStore } from "./auth/tokens.js";
+import { registerMcp } from "./mcp/server.js";
+import { createCommentService } from "./workspace/comments.js";
+import { createWorkspaceService } from "./workspace/service.js";
 
 import type { Config } from "./config.js";
 import type { AppContext, RealtimeHooks } from "./context.js";
@@ -71,6 +82,8 @@ export const buildApp = async (
     scenePresence: async () => new Map(),
     closeSceneRoom: () => {},
     recheckScenes: async () => {},
+    broadcastSceneUpdate: () => {},
+    notifyComments: () => {},
   };
 
   const ctx: AppContext = {
@@ -84,6 +97,9 @@ export const buildApp = async (
       scenePresence: () => realtimeHooks.scenePresence(),
       closeSceneRoom: (id) => realtimeHooks.closeSceneRoom(id),
       recheckScenes: (ids) => realtimeHooks.recheckScenes(ids),
+      broadcastSceneUpdate: (id, key, elements) =>
+        realtimeHooks.broadcastSceneUpdate(id, key, elements),
+      notifyComments: (id) => realtimeHooks.notifyComments(id),
     },
   };
 
@@ -119,6 +135,15 @@ export const buildApp = async (
 
   // never send internal error details (database messages, stack traces)
   app.setErrorHandler((error: FastifyError, request, reply) => {
+    if (error instanceof HttpError) {
+      return sendError(
+        reply,
+        error.statusCode,
+        error.code,
+        error.message,
+        error.extra,
+      );
+    }
     const status = error.statusCode || 500;
     if (status < 500) {
       return reply.code(status).send({
@@ -150,6 +175,25 @@ export const buildApp = async (
   const { requireAuth } = registerAuth(app, ctx);
   registerDataRoutes(app, ctx, requireAuth);
   registerWorkspaceRoutes(app, ctx, requireAuth);
+
+  // Phase 3: comments, REST API, MCP server
+  const workspace = createWorkspaceService(ctx);
+  const comments = createCommentService(ctx, workspace);
+  const operations = createSceneOperations(workspace);
+  registerCommentRoutes(app, "/api", { preHandler: requireAuth }, comments);
+  if (config.api.enabled) {
+    const requireToken = createRequireToken(new TokenStore(ctx.db, config));
+    registerTokenRoutes(app, ctx, requireAuth);
+    registerApiRoutes(
+      app,
+      ctx,
+      { workspace, operations, comments },
+      requireToken,
+    );
+    if (config.api.mcpEnabled) {
+      registerMcp(app, ctx, { workspace, operations, comments }, requireToken);
+    }
+  }
   await registerStatic(app, config);
 
   const { io, hooks } = attachRealtime(
