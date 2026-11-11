@@ -24,7 +24,13 @@ Das Datenmodell enthält von Anfang an Workspaces, damit W10 ohne Umbau möglich
 - **T2** Nur-Lese-Link je Szene, abschaltbar; nur für angemeldete Personen.
 - **Z1** Jede Szene ist zugleich ein Live-Raum; Berechtigte treten beim Öffnen bei, Personen mit Leserecht sehen Änderungen und Mauszeiger live, können aber nichts ändern.
 
-Bekannte Grenzen, die später folgen: gelöschte Szenen sind nur ausgeblendet (W5, S3), keine Unterordner (W4), kein Austausch des Hauptschlüssels im laufenden Betrieb (Schlüsselrotation, mit S3 in Phase 4), das Verzeichnis kennt nur Personen, die sich schon einmal angemeldet haben.
+Bekannte Grenzen, die später folgen:
+
+- Gelöschte Szenen sind nur ausgeblendet (W5, S3).
+- Keine Unterordner (W4).
+- Kein Austausch von Schlüsseln im laufenden Betrieb, weder des Hauptschlüssels noch der Szenenschlüssel (Schlüsselrotation, mit S3 in Phase 4). Wer früher Zugriff hatte, kennt den Szenenschlüssel noch; ohne Zugriff auf Server, Datenbank oder Backups nützt er ihm nichts.
+- Das Verzeichnis kennt nur Personen, die sich schon einmal angemeldet haben.
+- Gruppen und Rollen werden bei der Anmeldung aus Keycloak übernommen; Änderungen in Keycloak wirken mit der nächsten Anmeldung (spätestens nach `SESSION_TTL_HOURS`).
 
 ## Priorisierung
 

@@ -195,6 +195,10 @@ export const isSavedToFirebase = (
   portal: Portal,
   elements: readonly ExcalidrawElement[],
 ): boolean => {
+  // viewers of workspace scenes have nothing to save
+  if (portal.roomId && isRoomReadOnly(portal.roomId)) {
+    return true;
+  }
   if (portal.socket && portal.roomId && portal.roomKey) {
     const sceneVersion = getSceneVersion(elements);
 

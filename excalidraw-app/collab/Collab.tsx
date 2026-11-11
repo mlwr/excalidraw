@@ -87,7 +87,7 @@ import {
   saveUsernameToLocalStorage,
 } from "../data/localStorage";
 import { resetBrowserStateVersions } from "../data/tabSync";
-import { getActiveScene } from "../intranet/activeScene";
+import { getActiveScene, reloadActiveScene } from "../intranet/activeScene";
 import { LOCAL_EDITOR_PATH } from "../intranet/routes";
 import { getCurrentUser, getMaxFileUploadBytes } from "../intranet/session";
 
@@ -727,6 +727,30 @@ class Collab extends PureComponent<CollabProps, CollabState> {
         this.relayVisibleSceneBounds({ force: true });
       },
     );
+
+    // intranet fork: for workspace scenes the server ends the live connection
+    // when rights change, the scene is deleted or the session ends
+    if (getActiveScene()) {
+      let startedOver = false;
+      const startOver = () => {
+        if (startedOver) {
+          return;
+        }
+        startedOver = true;
+        if (!reloadActiveScene()) {
+          this.setErrorDialog(
+            "Die Live-Verbindung zu dieser Szene wurde beendet. Bitte lade die Seite neu.",
+          );
+        }
+      };
+      this.portal.socket.on("scene-access-changed", startOver);
+      this.portal.socket.on("room-access-denied", startOver);
+      this.portal.socket.on("disconnect", (reason: string) => {
+        if (reason === "io server disconnect") {
+          startOver();
+        }
+      });
+    }
 
     this.initializeIdleDetector();
 

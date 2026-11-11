@@ -353,6 +353,15 @@ describeE2E("browser end-to-end", () => {
       .toBe(1);
     await overview.waitForSelector(".ws-card__live");
 
+    // --- Alice turns the link off: Bob's open view ends right away ----------
+    await dashboard.click(".collab-button");
+    await dashboard.click(".ws-toggle input");
+    await readLinkInput.waitFor({ state: "detached" });
+    await closeDialog(dashboard);
+    await bobPage.waitForSelector("text=Szene nicht gefunden", {
+      timeout: 30000,
+    });
+
     expect(external).toEqual([]);
     expect(cspViolations).toEqual([]);
     expect(pageErrors).toEqual([]);
