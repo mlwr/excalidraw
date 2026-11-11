@@ -88,6 +88,7 @@ import {
 } from "../data/localStorage";
 import { resetBrowserStateVersions } from "../data/tabSync";
 import { getActiveScene, reloadActiveScene } from "../intranet/activeScene";
+import { notifyCommentsChanged } from "../intranet/sceneRoom";
 import { LOCAL_EDITOR_PATH } from "../intranet/routes";
 import { getCurrentUser, getMaxFileUploadBytes } from "../intranet/session";
 
@@ -744,6 +745,7 @@ class Collab extends PureComponent<CollabProps, CollabState> {
         }
       };
       this.portal.socket.on("scene-access-changed", startOver);
+      this.portal.socket.on("comments-changed", notifyCommentsChanged);
       this.portal.socket.on("room-access-denied", startOver);
       this.portal.socket.on("disconnect", (reason: string) => {
         if (reason === "io server disconnect") {

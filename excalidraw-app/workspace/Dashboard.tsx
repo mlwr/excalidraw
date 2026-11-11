@@ -2,9 +2,10 @@ import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { LOCAL_EDITOR_PATH, scenePath } from "../intranet/routes";
-import { getCurrentUser, logout } from "../intranet/session";
+import { getCurrentUser, getRuntimeConfig, logout } from "../intranet/session";
 import { workspaceApi } from "../intranet/workspaceApi";
 
+import { ApiTokensDialog } from "./ApiTokensDialog";
 import {
   CollectionAccessDialog,
   ConfirmDialog,
@@ -33,7 +34,8 @@ type Modal =
   | { kind: "renameScene"; scene: SceneSummary }
   | { kind: "moveScene"; scene: SceneSummary }
   | { kind: "shareScene"; scene: SceneSummary }
-  | { kind: "deleteScene"; scene: SceneSummary };
+  | { kind: "deleteScene"; scene: SceneSummary }
+  | { kind: "apiTokens" };
 
 const REFRESH_INTERVAL_MS = 30 * 1000;
 
@@ -420,6 +422,14 @@ export const Dashboard = () => {
               <span className="ws-user__name">{user.name}</span>
             </span>
           )}
+          {getRuntimeConfig().api.enabled && (
+            <Button
+              variant="ghost"
+              onClick={() => setModal({ kind: "apiTokens" })}
+            >
+              API-Tokens
+            </Button>
+          )}
           <Button variant="ghost" onClick={() => logout()}>
             Abmelden
           </Button>
@@ -733,6 +743,9 @@ export const Dashboard = () => {
             refreshAll();
           }}
         />
+      )}
+      {modal?.kind === "apiTokens" && (
+        <ApiTokensDialog onClose={() => setModal(null)} />
       )}
     </div>
   );

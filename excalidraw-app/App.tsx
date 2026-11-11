@@ -144,6 +144,8 @@ import { registerEditorForThumbnails } from "./intranet/workspaceScene";
 import { EditorWorkspaceNav } from "./workspace/EditorWorkspaceNav";
 import { SaveToWorkspaceDialog } from "./workspace/SaveToWorkspaceDialog";
 import { SceneShareDialog } from "./workspace/SceneShareDialog";
+import { CommentsButton } from "./workspace/comments/CommentsButton";
+import { CommentsLayer } from "./workspace/comments/CommentsLayer";
 
 import "./index.scss";
 
@@ -976,6 +978,7 @@ const ExcalidrawWrapper = () => {
           return (
             <div className="excalidraw-ui-top-right">
               {collabError.message && <CollabError collabError={collabError} />}
+              {activeScene && <CommentsButton />}
               <LiveCollaborationTrigger
                 isCollaborating={isCollaborating}
                 onSelect={() =>
@@ -1044,6 +1047,8 @@ const ExcalidrawWrapper = () => {
         {excalidrawAPI && !isCollabDisabled && (
           <Collab excalidrawAPI={excalidrawAPI} />
         )}
+
+        {activeScene && <CommentsLayer scene={activeScene} />}
 
         {activeScene ? (
           <SceneShareDialog scene={activeScene} />

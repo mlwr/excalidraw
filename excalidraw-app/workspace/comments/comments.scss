@@ -1,0 +1,314 @@
+// Intranet fork: comments on workspace scenes. The layer lies above the
+// canvas (z-index 1-3) and below the editor's toolbars (4); popovers and
+// the list lie above the toolbars and below the editor's dialogs (1000).
+
+.ws-comments-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  overflow: hidden;
+
+  &.is-placing {
+    pointer-events: auto;
+    cursor: crosshair;
+  }
+}
+
+.ws-comments-hint {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--ws-text);
+  color: var(--ws-bg);
+  font-size: 13px;
+  box-shadow: var(--ws-shadow);
+  pointer-events: none;
+}
+
+.ws-comment-pin {
+  position: absolute;
+  // the pin's tip sits on the commented point
+  transform: translate(0, -100%);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 2px solid var(--ws-bg);
+  border-radius: 14px 14px 14px 2px;
+  background: var(--ws-primary);
+  box-shadow: var(--ws-shadow);
+  cursor: pointer;
+  pointer-events: auto;
+
+  .ws-avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+  }
+
+  &:hover,
+  &.is-open {
+    outline: 2px solid var(--ws-primary);
+    outline-offset: 1px;
+  }
+
+  &.is-resolved {
+    background: var(--ws-muted);
+    opacity: 0.8;
+  }
+}
+
+.ws-comment-pin__count {
+  padding: 0 4px 0 2px;
+  color: var(--ws-on-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ws-comment-popover {
+  position: absolute;
+  z-index: 10;
+  width: 320px;
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--ws-border);
+  border-radius: var(--ws-radius);
+  background: var(--ws-bg);
+  box-shadow: var(--ws-shadow);
+  pointer-events: auto;
+  cursor: default;
+}
+
+.ws-comment-popover__hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.ws-thread__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+
+  .ws-dialog__close {
+    margin-left: 0;
+  }
+}
+
+.ws-thread__title {
+  flex: 1;
+  font-weight: 600;
+}
+
+.ws-thread__comments {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.ws-comment {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ws-border);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.ws-comment__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+
+  .ws-avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+  }
+}
+
+.ws-comment__author {
+  font-weight: 600;
+}
+
+.ws-comment__text {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.ws-comment__actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 12px;
+
+  .ws-link {
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+  }
+}
+
+.ws-comment-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  textarea {
+    width: 100%;
+    resize: vertical;
+    min-height: 64px;
+    font: inherit;
+    box-sizing: border-box;
+  }
+}
+
+.ws-comment-composer__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ws-comments-panel {
+  position: absolute;
+  z-index: 10;
+  top: 64px;
+  right: 16px;
+  width: 300px;
+  max-height: calc(100% - 140px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--ws-border);
+  border-radius: var(--ws-radius);
+  background: var(--ws-bg);
+  box-shadow: var(--ws-shadow);
+  pointer-events: auto;
+
+  h2 {
+    flex: 1;
+    margin: 0;
+    font-size: 16px;
+  }
+}
+
+.ws-comments-panel__head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.ws-comments-panel__new {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.ws-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--ws-border);
+}
+
+.ws-tab {
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--ws-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+
+  &.is-active {
+    border-bottom-color: var(--ws-primary);
+    color: var(--ws-text);
+    font-weight: 600;
+  }
+}
+
+.ws-comments-panel__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ws-comments-panel__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover,
+  &.is-active {
+    background: var(--ws-surface);
+  }
+}
+
+.ws-comments-panel__meta {
+  color: var(--ws-muted);
+  font-size: 12px;
+}
+
+.ws-comments-panel__text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  font-size: 14px;
+}
+
+.ws-comments-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-right: 8px;
+  border: none;
+  border-radius: 8px;
+  background: var(--island-bg-color, var(--ws-surface));
+  box-shadow: var(--shadow-island, none);
+  color: var(--ws-text);
+  cursor: pointer;
+
+  &:hover,
+  &.is-active {
+    background: var(--ws-primary-soft);
+    color: var(--ws-primary);
+  }
+}
+
+.ws-comments-button__count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--ws-primary);
+  color: var(--ws-on-primary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  box-sizing: border-box;
+}

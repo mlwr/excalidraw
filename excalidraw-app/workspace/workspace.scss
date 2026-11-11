@@ -858,3 +858,72 @@ select.ws-input {
     transition: none;
   }
 }
+
+// API tokens dialog (dashboard)
+@media (max-width: 760px) {
+  .ws-token-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ws-token-form {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(180px, 1.2fr) minmax(110px, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  margin: 12px 0;
+
+  .ws-field {
+    margin: 0;
+  }
+}
+
+.ws-token-created {
+  margin: 12px 0;
+}
+
+.ws-copy {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 6px 0 12px;
+}
+
+.ws-copy__value {
+  flex: 1;
+  font-family: "Cascadia", ui-monospace, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.ws-table {
+  width: 100%;
+  margin: 12px 0;
+  border-collapse: collapse;
+  font-size: 14px;
+
+  th,
+  td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--ws-border);
+    text-align: left;
+  }
+
+  th {
+    color: var(--ws-muted);
+    font-weight: 600;
+  }
+
+  .is-muted td {
+    color: var(--ws-muted);
+  }
+}
+
+.ws-details {
+  margin-top: 12px;
+
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+}

@@ -21,6 +21,8 @@ export interface RuntimeConfig {
   ai: { enabled: boolean };
   libraries: { browseUrl: string | null };
   workspace: { enabled: boolean };
+  /** REST API and MCP server with personal API tokens */
+  api: { enabled: boolean; mcpEnabled: boolean };
 }
 
 export type BootstrapResult =
@@ -36,6 +38,7 @@ const DEFAULT_CONFIG: RuntimeConfig = {
   ai: { enabled: false },
   libraries: { browseUrl: null },
   workspace: { enabled: false },
+  api: { enabled: false, mcpEnabled: false },
 };
 
 const RETURN_HASH_KEY = "excalidraw-intranet-return-hash";

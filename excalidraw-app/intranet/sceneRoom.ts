@@ -42,3 +42,15 @@ export const onSceneSaved = (listener: SavedListener) => {
 export const notifySceneSaved = (sceneId: string) => {
   savedListeners.forEach((listener) => listener(sceneId));
 };
+
+const commentListeners = new Set<() => void>();
+
+/** called when the server says the open scene's comments changed */
+export const onCommentsChanged = (listener: () => void) => {
+  commentListeners.add(listener);
+  return () => commentListeners.delete(listener);
+};
+
+export const notifyCommentsChanged = () => {
+  commentListeners.forEach((listener) => listener());
+};

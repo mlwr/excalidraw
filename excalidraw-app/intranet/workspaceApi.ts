@@ -60,6 +60,49 @@ export type SceneListQuery =
 
 export type SceneSort = "updated" | "created" | "name";
 
+export interface ApiTokenInfo {
+  id: string;
+  name: string;
+  scope: "read" | "write";
+  hint: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string;
+  expired: boolean;
+}
+
+export interface Person {
+  id: string;
+  name: string;
+}
+
+export interface CommentInfo {
+  id: string;
+  text: string;
+  author: Person | null;
+  mentions: Person[];
+  createdAt: string;
+  editedAt: string | null;
+  canEdit: boolean;
+  canDelete: boolean;
+}
+
+export interface CommentThread {
+  id: string;
+  sceneId: string;
+  /** scene coordinates; relative to the element's top left with elementId */
+  x: number;
+  y: number;
+  elementId: string | null;
+  createdAt: string;
+  createdBy: Person | null;
+  updatedAt: string;
+  resolved: boolean;
+  resolvedBy: Person | null;
+  canResolve: boolean;
+  comments: CommentInfo[];
+}
+
 const json = async <T>(response: Response): Promise<T> => {
   if (!response.ok) {
     let message = `Fehler ${response.status}`;
@@ -194,6 +237,84 @@ export const workspaceApi = {
   ) =>
     json<{ ok: true }>(
       await send("PUT", `/api/collections/${collectionId}/grants`, { grants }),
+    ),
+
+  tokens: async () =>
+    json<{
+      allowed: boolean;
+      maxDays: number;
+      mcpEnabled: boolean;
+      tokens: ApiTokenInfo[];
+    }>(await backendFetch("/api/tokens")),
+
+  createToken: async (input: {
+    name: string;
+    scope: "read" | "write";
+    expiresInDays: number;
+  }) =>
+    json<ApiTokenInfo & { token: string }>(
+      await send("POST", "/api/tokens", input),
+    ),
+
+  revokeToken: async (tokenId: string) =>
+    json<void>(
+      await send("DELETE", `/api/tokens/${encodeURIComponent(tokenId)}`),
+    ),
+
+  comments: async (sceneId: string) =>
+    json<{ threads: CommentThread[] }>(
+      await backendFetch(`/api/scenes/${encodeURIComponent(sceneId)}/comments`),
+    ),
+
+  createThread: async (
+    sceneId: string,
+    input: {
+      x: number;
+      y: number;
+      elementId: string | null;
+      text: string;
+      mentions?: string[];
+    },
+  ) =>
+    json<{ thread: CommentThread }>(
+      await send(
+        "POST",
+        `/api/scenes/${encodeURIComponent(sceneId)}/comments`,
+        input,
+      ),
+    ),
+
+  replyToThread: async (
+    threadId: string,
+    input: { text: string; mentions?: string[] },
+  ) =>
+    json<{ thread: CommentThread }>(
+      await send(
+        "POST",
+        `/api/comment-threads/${encodeURIComponent(threadId)}/comments`,
+        input,
+      ),
+    ),
+
+  resolveThread: async (threadId: string, resolved: boolean) =>
+    json<{ thread: CommentThread }>(
+      await send(
+        "PATCH",
+        `/api/comment-threads/${encodeURIComponent(threadId)}`,
+        { resolved },
+      ),
+    ),
+
+  editComment: async (commentId: string, text: string) =>
+    json<{ thread: CommentThread }>(
+      await send("PATCH", `/api/comments/${encodeURIComponent(commentId)}`, {
+        text,
+      }),
+    ),
+
+  deleteComment: async (commentId: string) =>
+    json<void>(
+      await send("DELETE", `/api/comments/${encodeURIComponent(commentId)}`),
     ),
 
   directory: async (q: string) =>

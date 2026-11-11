@@ -376,6 +376,176 @@ describeE2E("browser end-to-end", () => {
     expect(pageErrors).toEqual([]);
   }, 180000);
 
+  it("issues API tokens, shows API changes live and keeps comments", async () => {
+    const shot = async (page: Page, name: string) => {
+      if (process.env.E2E_SCREENSHOT_DIR) {
+        await page.screenshot({
+          path: `${process.env.E2E_SCREENSHOT_DIR}/${name}.png`,
+        });
+      }
+    };
+
+    // --- Bob creates a write token in the dashboard -------------------------
+    env.oidc.setUser(bob);
+    const bobContext = await newContext();
+    const dashboard = await openDashboard(bobContext);
+    await dashboard.getByRole("button", { name: "API-Tokens" }).click();
+    await dashboard.fill(".ws-token-form input", "E2E-Skript");
+    await dashboard.selectOption(".ws-token-form select >> nth=0", "write");
+    await dashboard.getByRole("button", { name: "Token erzeugen" }).click();
+    const tokenField = dashboard.locator(
+      "textarea[aria-label='Neues API-Token']",
+    );
+    await tokenField.waitFor();
+    const token = await tokenField.inputValue();
+    expect(token).toMatch(/^exc_/);
+    await expect(dashboard.locator(".ws-table tbody tr").count()).resolves.toBe(
+      1,
+    );
+    await shot(dashboard, "api-tokens");
+    await closeDialog(dashboard);
+
+    const api = async (method: string, url: string, body?: unknown) => {
+      const response = await fetch(`${APP_URL}/api/v1${url}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(body ? { "content-type": "application/json" } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      expect(response.ok).toBe(true);
+      return response.json();
+    };
+
+    // --- a script draws a diagram through the API ---------------------------
+    const { scene } = await api("POST", "/scenes", { name: "Per API" });
+    await api("POST", `/scenes/${scene.id}/diagram`, {
+      direction: "LR",
+      nodes: [
+        { id: "a", label: "Antrag", shape: "ellipse" },
+        { id: "b", label: "Prüfung", shape: "diamond" },
+        { id: "c", label: "Bescheid" },
+      ],
+      edges: [
+        { from: "a", to: "b" },
+        { from: "b", to: "c", label: "ok" },
+      ],
+    });
+
+    const bobPage = await bobContext.newPage();
+    await bobPage.goto(scene.url);
+    await bobPage.waitForSelector(".ws-editor-nav__title:has-text('Per API')", {
+      timeout: 30000,
+    });
+    await expect
+      .poll(() => drawnPixels(bobPage), { timeout: 15000 })
+      .toBeGreaterThan(2000);
+    const before = await drawnPixels(bobPage);
+    await shot(bobPage, "api-diagram");
+
+    // Carol (group /IT) may look at it
+    await bobPage.evaluate(
+      (id) =>
+        fetch(`/api/scenes/${id}/grants`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            grants: [{ type: "group", principal: "/IT", role: "viewer" }],
+          }),
+        }),
+      scene.id,
+    );
+    env.oidc.setUser(carolIT);
+    const carolContext = await newContext();
+    const carolPage = await carolContext.newPage();
+    await carolPage.goto(scene.url);
+    await carolPage.waitForSelector(".ws-badge:has-text('Nur Ansicht')", {
+      timeout: 30000,
+    });
+    await expect
+      .poll(() => drawnPixels(carolPage), { timeout: 15000 })
+      .toBeGreaterThan(2000);
+
+    // --- an API change appears in both open editors right away ---------------
+    await api("POST", `/scenes/${scene.id}/elements`, {
+      elements: [
+        {
+          type: "rectangle",
+          x: -400,
+          y: -300,
+          width: 260,
+          height: 120,
+          backgroundColor: "#ffc9c9",
+          fillStyle: "solid",
+          label: { text: "Live aus der API" },
+        },
+      ],
+    });
+    await expect
+      .poll(() => drawnPixels(bobPage), { timeout: 15000 })
+      .toBeGreaterThan(before + 1000);
+
+    // --- Bob comments on the canvas, Carol sees it live and answers ----------
+    await bobPage.click(".ws-comments-button");
+    await bobPage.getByRole("button", { name: "Kommentar hinzufügen" }).click();
+    await bobPage.waitForSelector(".ws-comments-layer.is-placing");
+    await bobPage.mouse.click(640, 420);
+    await bobPage.fill(
+      ".ws-comment-popover textarea",
+      "Fehlt hier nicht die Fristprüfung?",
+    );
+    await bobPage
+      .locator(".ws-comment-popover")
+      .getByRole("button", { name: "Kommentieren" })
+      .click();
+    await bobPage.waitForSelector(".ws-comment-pin");
+    await shot(bobPage, "comment-created");
+
+    const carolPin = carolPage.locator(".ws-comment-pin");
+    await carolPin.waitFor({ timeout: 15000 });
+    await carolPin.click();
+    await carolPage.waitForSelector(
+      ".ws-comment-popover >> text=Fehlt hier nicht die Fristprüfung?",
+    );
+    await carolPage.fill(
+      ".ws-comment-popover textarea",
+      "Doch – nehme ich auf.",
+    );
+    await carolPage
+      .locator(".ws-comment-popover")
+      .getByRole("button", { name: "Antworten" })
+      .click();
+    await carolPage.waitForSelector(
+      ".ws-comment-popover >> text=Doch – nehme ich auf.",
+    );
+    await shot(carolPage, "comment-reply");
+
+    // Bob's pin counts both, and Bob resolves the thread
+    await bobPage.waitForSelector(".ws-comment-pin__count:has-text('2')", {
+      timeout: 15000,
+    });
+    // Bob's thread is still open and got the reply live
+    await bobPage.waitForSelector(
+      ".ws-comment-popover >> text=Doch – nehme ich auf.",
+    );
+    await bobPage
+      .locator(".ws-comment-popover")
+      .getByRole("button", { name: "Erledigt" })
+      .click();
+    await bobPage.waitForSelector(".ws-tab:has-text('Erledigt (1)')");
+    // Carol sees it resolved right away (her open thread stays, greyed out)
+    await carolPage.waitForSelector(".ws-comment-pin.is-resolved", {
+      timeout: 15000,
+    });
+    await carolPage.locator(".ws-comment-popover .ws-dialog__close").click();
+    await carolPage.waitForSelector(".ws-comment-pin", { state: "detached" });
+
+    expect(external).toEqual([]);
+    expect(cspViolations).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  }, 180000);
+
   it("saves a drawing from the local editor into the workspace", async () => {
     env.oidc.setUser(bob);
     const context = await newContext();
