@@ -60,6 +60,9 @@ services:
       OIDC_CLIENT_SECRET: dev-secret-change-me
       OIDC_ALLOW_INSECURE_HTTP: "true"
       OIDC_REQUIRED_ROLE: excalidraw-user
+      # DEV ONLY: fixed key so that scenes survive a rebuild of this stack.
+      # Production: `openssl rand -base64 32`, kept in a secret and backed up.
+      DATA_ENCRYPTION_KEY: ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=
       LOG_LEVEL: info
 
 volumes:

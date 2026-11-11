@@ -47,6 +47,17 @@ kubectl create secret generic excalidraw-oidc \
   --from-literal=oidc-client-secret='<Client-Secret aus Keycloak>'
 kubectl create secret generic excalidraw-db \
   --from-literal=database-url='postgres://excalidraw:<Passwort>@postgres.db.svc:5432/excalidraw?sslmode=require'
+kubectl create secret generic excalidraw-encryption \
+  --from-literal=data-encryption-key="$(openssl rand -base64 32)"
+kubectl create secret generic excalidraw-s3 \
+  --from-literal=s3-access-key-id='<Access Key>' \
+  --from-literal=s3-secret-access-key='<Secret Key>'
+```
+
+> **Wichtig:** Den Wert von `data-encryption-key` zusätzlich getrennt von den Datenbank-Backups sichern (z. B. im Passwort-Tresor des Betriebs). Ohne ihn lassen sich gespeicherte Szenen nicht mehr entschlüsseln; ein neuer Schlüssel macht alle bestehenden Szenen unlesbar.
+
+```bash
+kubectl get secret excalidraw-encryption -o jsonpath='{.data.data-encryption-key}' | base64 -d
 ```
 
 `values-intranet.yaml`:
@@ -66,6 +77,17 @@ oidc:
 
 database:
   existingSecret: excalidraw-db
+
+encryption:
+  existingSecret: excalidraw-encryption
+
+# Bilder und Vorschaubilder im eigenen S3-Bucket
+storage:
+  driver: s3
+  s3:
+    endpoint: https://s3.intranet.example
+    bucket: excalidraw
+    existingSecret: excalidraw-s3
 
 ingress:
   className: nginx
@@ -87,7 +109,8 @@ Hinweise:
 - Die Datenbank wird beim Start automatisch migriert (`AUTO_MIGRATE`); mehrere Pods sperren sich dabei gegenseitig.
 - Bei mehr als einem Pod schaltet das Chart `REALTIME_CLUSTER` ein, damit Live-Sitzungen über Pods hinweg funktionieren. Websockets brauchen am Ingress lange Timeouts (sind für ingress-nginx voreingestellt).
 - `postgresql.enabled: true` startet eine einfache Datenbank im Cluster, nur für Testumgebungen.
-- Bilder liegen standardmäßig in PostgreSQL. Für S3-kompatiblen Speicher `storage.driver: s3` und `storage.s3.*` setzen.
+- Szenen (verschlüsselt) liegen immer in PostgreSQL, Bilder und Vorschaubilder je nach `storage.driver` in PostgreSQL (Standard) oder im S3-Bucket. Mit eigenem S3 ist `s3` die bessere Wahl: Bilder sind bis zu 25 MB groß und blähen sonst Datenbank und Backups auf. Ein Wechsel später verschiebt bestehende Bilder nicht.
+- Ohne `encryption.key` oder `encryption.existingSecret` bricht `helm install` mit einer Meldung ab.
 
 ## 4. Konfiguration (Server)
 
@@ -99,6 +122,7 @@ Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. 
 | `DATABASE_URL` | – (Pflicht) | PostgreSQL-Verbindung (`postgres://…`, `?sslmode=require` für TLS) |
 | `DATABASE_POOL_SIZE` | `10` | Datenbankverbindungen pro Pod |
 | `AUTO_MIGRATE` | `true` | Schema beim Start aktualisieren |
+| `DATA_ENCRYPTION_KEY` | – (Pflicht) | Hauptschlüssel für die Szenen-Schlüssel: 32 Zufallsbytes in Base64 (`openssl rand -base64 32`), getrennt sichern |
 | `OIDC_ISSUER_URL` | – (Pflicht) | Realm-URL, z. B. `https://sso.intranet.example/realms/company` |
 | `OIDC_CLIENT_ID` | – (Pflicht) | Client-ID in Keycloak |
 | `OIDC_CLIENT_SECRET` | – | Secret des vertraulichen Clients |
@@ -111,7 +135,7 @@ Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. 
 | `OIDC_ALLOW_INSECURE_HTTP` | `false` | Keycloak über http (nur Entwicklung) |
 | `SESSION_TTL_HOURS` | `10` | Lebensdauer einer Sitzung |
 | `SESSION_COOKIE_NAME` | `excalidraw_session` | Name des Sitzungs-Cookies |
-| `STORAGE_DRIVER` | `postgres` | `postgres` oder `s3` für Bilder |
+| `STORAGE_DRIVER` | `postgres` | `postgres` oder `s3` für Bilder und Vorschaubilder |
 | `S3_ENDPOINT`, `S3_BUCKET` | – | S3-Ziel (bei `s3` Pflicht) |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | – | S3-Zugang (bei `s3` Pflicht) |
 | `S3_REGION`, `S3_FORCE_PATH_STYLE`, `S3_PREFIX` | `us-east-1`, `true`, leer | S3-Details |
@@ -133,5 +157,6 @@ Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. 
 
 - **Health**: `GET /healthz` (Prozess lebt), `GET /readyz` (Datenbank und Speicher erreichbar). Ein Ausfall von Keycloak nimmt Pods nicht aus dem Dienst; laufende Sitzungen arbeiten weiter, neue Anmeldungen schlagen fehl.
 - **Logs**: JSON-Zeilen auf stdout, Cookies und Authorization-Header werden geschwärzt.
-- **Backup**: alles Wichtige liegt in PostgreSQL (bei `STORAGE_DRIVER=s3` zusätzlich der Bucket). Ein `pg_dump` der Datenbank genügt für Phase 1.
+- **Backup**: PostgreSQL (`pg_dump`), bei `STORAGE_DRIVER=s3` zusätzlich der Bucket, und einmalig der `DATA_ENCRYPTION_KEY` an einem getrennten Ort. Nur alle drei zusammen ergeben eine lesbare Wiederherstellung; Dump und Bucket allein enthalten nur Chiffretext.
+- **Gelöschte Szenen** sind vorerst nur ausgeblendet (`deleted_at`) und bleiben in der Datenbank. Papierkorb und endgültiges Löschen folgen mit W5 und S3 in Phase 4.
 - **Updates**: Image-Tag erhöhen und `helm upgrade`; Migrationen laufen beim Start.

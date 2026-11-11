@@ -14,6 +14,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { alice, bob, createTestEnv, describeWithDb } from "../helpers/setup.js";
 
+import type { FakeUser } from "../helpers/fakeOidc.js";
+
 import type { TestEnv } from "../helpers/setup.js";
 import type { Browser, BrowserContext, Page } from "playwright";
 
@@ -22,6 +24,13 @@ const STATIC_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../../excalidraw-app/build",
 );
+
+const carolIT: FakeUser = {
+  sub: "carol",
+  name: "Carol IT",
+  email: "carol@example.test",
+  groups: ["/IT"],
+};
 
 const describeE2E = existsSync(path.join(STATIC_DIR, "index.html"))
   ? describeWithDb
@@ -109,7 +118,7 @@ describeE2E("browser end-to-end", () => {
     return context;
   };
 
-  const openApp = async (context: BrowserContext, url = `${APP_URL}/`) => {
+  const openApp = async (context: BrowserContext, url = `${APP_URL}/local`) => {
     const page = await context.newPage();
     await page.goto(url);
     await page.waitForSelector(".excalidraw .collab-button", {
@@ -130,6 +139,22 @@ describeE2E("browser end-to-end", () => {
     await browser?.close();
     await env?.close();
   });
+
+  const openDashboard = async (context: BrowserContext) => {
+    const page = await context.newPage();
+    await page.goto(`${APP_URL}/`);
+    await page.waitForSelector(".ws-dashboard .ws-main h1", { timeout: 30000 });
+    return page;
+  };
+
+  const drawRectangle = async (page: Page, x: number, y: number) => {
+    await page.keyboard.press("r");
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 180, y + 120, { steps: 5 });
+    await page.mouse.up();
+    await page.keyboard.press("Escape");
+  };
 
   it("logs in, collaborates live, shares links and stays inside the network", async () => {
     // --- Alice logs in via Keycloak and draws a rectangle -------------------
@@ -217,6 +242,141 @@ describeE2E("browser end-to-end", () => {
     expect(me.status()).toBe(401);
 
     // --- nothing left the network, nothing was blocked -----------------------
+    expect(external).toEqual([]);
+    expect(cspViolations).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  }, 120000);
+
+  it("runs the workspace: collections, groups, live editing, read-only links", async () => {
+    // Carol (Keycloak group /IT) logs in once, so the group is known
+    env.oidc.setUser(carolIT);
+    const carolContext = await newContext();
+    await openDashboard(carolContext);
+
+    // --- Alice creates a team collection for the group /IT ------------------
+    env.oidc.setUser(alice);
+    const aliceContext = await newContext();
+    const dashboard = await openDashboard(aliceContext);
+    await dashboard.click("button[aria-label='Neue Collection']");
+    await dashboard.fill(".ws-dialog input", "Architektur");
+    await dashboard.click(".ws-dialog__footer .ws-button--primary");
+    await dashboard.waitForSelector("h1:has-text('Architektur')");
+
+    await dashboard.click("text=Zugriff verwalten");
+    await dashboard.selectOption(".ws-access__add select", "editor");
+    await dashboard.fill(".ws-access__search input", "IT");
+    await dashboard.click(".ws-access__suggestions button:has-text('/IT')");
+    await dashboard.click(".ws-dialog__footer .ws-button--primary");
+    await dashboard.waitForSelector(".ws-dialog", { state: "detached" });
+
+    // --- Alice creates a scene there and draws -------------------------------
+    await dashboard.click(".ws-main__actions >> text=Neue Szene");
+    await dashboard.waitForURL(/\/s\/[\w-]+$/);
+    const sceneUrl = dashboard.url();
+    // the empty scene finished loading once the welcome screen shows
+    await dashboard.waitForSelector(".welcome-screen-center", {
+      timeout: 30000,
+    });
+    await drawRectangle(dashboard, 350, 250);
+    const alicePixels = await drawnPixels(dashboard);
+    expect(alicePixels).toBeGreaterThan(100);
+
+    // --- Carol sees it in the collection and edits it live --------------------
+    const carolPage = await carolContext.newPage();
+    await carolPage.goto(sceneUrl);
+    await carolPage.waitForSelector(".excalidraw .collab-button", {
+      timeout: 30000,
+    });
+    await expect
+      .poll(() => drawnPixels(carolPage), { timeout: 15000 })
+      .toBeGreaterThan(100);
+    await carolPage.waitForFunction(
+      () =>
+        document.querySelector(".CollabButton-collaborators")?.textContent ===
+        "2",
+      undefined,
+      { timeout: 20000 },
+    );
+    await drawRectangle(carolPage, 650, 250);
+    await expect
+      .poll(() => drawnPixels(dashboard), { timeout: 15000 })
+      .toBeGreaterThan(alicePixels + 100);
+
+    // --- Bob has no access ------------------------------------------------------
+    env.oidc.setUser(bob);
+    const bobContext = await newContext();
+    const bobPage = await bobContext.newPage();
+    await bobPage.goto(sceneUrl);
+    await bobPage.waitForSelector("text=Szene nicht gefunden", {
+      timeout: 30000,
+    });
+
+    // --- Alice turns on the read-only link, Bob can only look -----------------
+    await dashboard.click(".collab-button");
+    // the switch flips once the server created the link
+    await dashboard.click(".ws-toggle input");
+    const readLinkInput = dashboard.locator(
+      "input[aria-label='Nur-Lese-Link']",
+    );
+    await readLinkInput.waitFor();
+    const readLink = await readLinkInput.inputValue();
+    expect(readLink).toMatch(new RegExp(`^${APP_URL}/v/[\\w-]+$`));
+    await closeDialog(dashboard);
+
+    await bobPage.goto(readLink);
+    await bobPage.waitForURL(sceneUrl, { timeout: 30000 });
+    await bobPage.waitForSelector(
+      ".ws-editor-nav .ws-badge:has-text('Nur Ansicht')",
+      {
+        timeout: 30000,
+      },
+    );
+    await expect
+      .poll(() => drawnPixels(bobPage), { timeout: 15000 })
+      .toBeGreaterThan(alicePixels + 100);
+    // view mode: no drawing tools at all
+    expect(
+      await bobPage.locator("[data-testid='toolbar-rectangle']").count(),
+    ).toBe(0);
+
+    // --- the dashboard shows a thumbnail and who is drawing -------------------
+    const overview = await openDashboard(aliceContext);
+    await overview.click(".ws-sidebar >> text=Architektur");
+    await expect
+      .poll(
+        async () => {
+          await overview.reload();
+          return overview.locator(".ws-card img").count();
+        },
+        { timeout: 60000, interval: 3000 },
+      )
+      .toBe(1);
+    await overview.waitForSelector(".ws-card__live");
+
+    expect(external).toEqual([]);
+    expect(cspViolations).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  }, 180000);
+
+  it("saves a drawing from the local editor into the workspace", async () => {
+    env.oidc.setUser(bob);
+    const context = await newContext();
+    const page = await openApp(context);
+    await page.waitForSelector(".welcome-screen-center", { timeout: 30000 });
+    await drawRectangle(page, 400, 300);
+
+    await page.click("[data-testid='main-menu-trigger']");
+    await page.getByText("Im Workspace speichern").click();
+    await page.fill(".ws-dialog input", "Aus dem Browser");
+    await page.click(".ws-dialog__footer .ws-button--primary");
+    await page.waitForURL(/\/s\/[\w-]+$/, { timeout: 30000 });
+    await page.waitForSelector(
+      ".ws-editor-nav__title:has-text('Aus dem Browser')",
+    );
+    await expect
+      .poll(() => drawnPixels(page), { timeout: 15000 })
+      .toBeGreaterThan(100);
+
     expect(external).toEqual([]);
     expect(cspViolations).toEqual([]);
     expect(pageErrors).toEqual([]);

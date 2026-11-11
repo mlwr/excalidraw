@@ -56,5 +56,5 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{/* the chart's own secret is needed when any credential is given inline */}}
 {{- define "excalidraw.needsSecret" -}}
-{{- if or (and .Values.oidc.clientSecret (not .Values.oidc.existingSecret)) (and .Values.database.url (not .Values.database.existingSecret)) .Values.postgresql.enabled (and (eq .Values.storage.driver "s3") (not .Values.storage.s3.existingSecret)) -}}true{{- end -}}
+{{- if or (and .Values.oidc.clientSecret (not .Values.oidc.existingSecret)) (and .Values.database.url (not .Values.database.existingSecret)) .Values.postgresql.enabled (and (eq .Values.storage.driver "s3") (not .Values.storage.s3.existingSecret)) (and .Values.encryption.key (not .Values.encryption.existingSecret)) -}}true{{- end -}}
 {{- end -}}

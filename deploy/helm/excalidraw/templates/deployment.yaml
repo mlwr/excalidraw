@@ -9,6 +9,9 @@
 {{- if not (or .Values.database.url .Values.database.existingSecret .Values.postgresql.enabled) }}
 {{- fail "set database.url, database.existingSecret or postgresql.enabled" }}
 {{- end }}
+{{- if not (or .Values.encryption.key .Values.encryption.existingSecret) }}
+{{- fail "set encryption.key or encryption.existingSecret (32 random bytes, base64: openssl rand -base64 32)" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -92,6 +95,16 @@ spec:
             - name: OIDC_POST_LOGOUT_REDIRECT_URL
               value: {{ . | quote }}
             {{- end }}
+            - name: DATA_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.encryption.existingSecret }}
+                  name: {{ .Values.encryption.existingSecret }}
+                  key: {{ .Values.encryption.existingSecretKey }}
+                  {{- else }}
+                  name: {{ $secretName }}
+                  key: data-encryption-key
+                  {{- end }}
             - name: SESSION_TTL_HOURS
               value: {{ .Values.session.ttlHours | quote }}
             - name: DATABASE_URL

@@ -7,13 +7,24 @@ Grundlage ist die Priorisierung vom 11.11.2026 (Muss, Soll, Kann, Gestrichen) de
 | Phase | Inhalt | Status |
 | --- | --- | --- |
 | 1 Fundament | B1 Server mit Datenbank, B2 Keycloak-SSO, B3 Rollen und Gruppen, B4 Echtzeit-Server, B5 keine Internet-Aufrufe, B6 Deployment (Helm), S1 Sicherheits-Grundschutz, E1 Bilder bis 4K | umgesetzt |
-| 2 Workspace | W2 Szenen auf dem Server, W1 Dashboard, W3 Collections, T1 Teilen mit Personen und Teams, T2 Nur-Lese-Links, Z1 dauerhafte Live-Zusammenarbeit | geplant |
+| 2 Workspace | W2 Szenen auf dem Server, W1 Dashboard, W3 Collections, T1 Teilen mit Personen und Teams, T2 Nur-Lese-Links, Z1 dauerhafte Live-Zusammenarbeit | umgesetzt |
 | 3 Kommentare und Schnittstellen | Z2 Kommentare, I1 REST-API, I2 MCP-Server | geplant |
 | 4 Soll: Ablage und Betrieb | W5 Papierkorb, W6 Suche, W7 Versionsverlauf, W8 Aktivitäts-Feed, W9 Export, W10 mehrere Workspaces, T5 Admin-Richtlinien, S2 Audit-Log, S3 Löschkonzept, B7 Monitoring/Backups, B8 Branding | geplant |
 | 5 Soll: Zusammenarbeit, Präsentation, KI, Bibliotheken | Z3 Benachrichtigungen, Z4 Spotlight, T3 Einbetten, P1 Präsentationsmodus, P7 Export PDF/PPTX, K1 KI mit internem Sprachmodell, K2 KI-Steuerung, L1 persönliche Bibliothek, L2 Team-Bibliotheken, E4 PDF-Import | geplant |
 | 6 Kann | E2, E3, I3, L3, P2–P6, S4, W4 nach Bedarf | offen |
 
 Das Datenmodell enthält von Anfang an Workspaces, damit W10 ohne Umbau möglich bleibt.
+
+### Phase 2 im Detail
+
+- **W2** Szenen liegen verschlüsselt auf dem Server (ein Schlüssel je Szene, versiegelt mit `DATA_ENCRYPTION_KEY`). Gespeichert wird laufend während des Zeichnens, Konflikte zwischen Pods verhindert eine Revisionsnummer.
+- **W1** Dashboard unter `/` mit „Zuletzt geöffnet“, „Meine Szenen“, „Mit mir geteilt“, Collections, Suche, Sortierung, Vorschaubildern und der Anzeige, wer gerade zeichnet. Import von `.excalidraw`-Dateien als neue Szene.
+- **W3** Persönliche Collection je Person, Team-Collections mit Freigaben an Personen und Keycloak-Gruppen (einschließlich Untergruppen), Szenen verschieben.
+- **T1** Freigabe einzelner Szenen an Personen oder Gruppen, Suche im Verzeichnis aller bisher angemeldeten Personen und ihrer Gruppen.
+- **T2** Nur-Lese-Link je Szene, abschaltbar; nur für angemeldete Personen.
+- **Z1** Jede Szene ist zugleich ein Live-Raum; Berechtigte treten beim Öffnen bei, Personen mit Leserecht sehen Änderungen und Mauszeiger live, können aber nichts ändern.
+
+Bekannte Grenzen, die später folgen: gelöschte Szenen sind nur ausgeblendet (W5, S3), keine Unterordner (W4), kein Austausch des Hauptschlüssels im laufenden Betrieb (Schlüsselrotation, mit S3 in Phase 4), das Verzeichnis kennt nur Personen, die sich schon einmal angemeldet haben.
 
 ## Priorisierung
 
@@ -74,11 +85,12 @@ Das Datenmodell enthält von Anfang an Workspaces, damit W10 ohne Umbau möglich
 | S3 | Datenschutz und Löschkonzept | Soll |
 | S4 | Verschlüsselte Ad-hoc-Sitzungen | Kann (in Phase 1 bereits enthalten) |
 
-## Offene Rahmenbedingungen
+## Rahmenbedingungen
 
-Diese Angaben fehlen noch und bestimmen spätere Phasen:
+Geklärt am 11.11.2026:
 
-- Gibt es intern ein Sprachmodell (Azure OpenAI, vLLM, Ollama …)? (K1, K2)
-- Ungefähre Nutzerzahl und gleichzeitige Nutzung (Skalierung)
-- Vorhandenes PostgreSQL (z. B. CloudNativePG) und S3-Speicher?
-- Keycloak-Version und Gruppenstruktur (Abteilungen als Teams für T1)
+- **Sprachmodell** für K1 und K2: intern vorhanden, derzeit Gemma 4 31B, alternativ Qwen 3.8 27B.
+- **Nutzerzahl**: rund 200 Personen. Zwei Pods (Ausfallsicherheit) reichen; `REALTIME_CLUSTER` hält Live-Sitzungen über beide zusammen.
+- **PostgreSQL und S3**: je eine eigene Instanz nur für Excalidraw. Empfehlung: `storage.driver: s3` für Bilder und Vorschaubilder.
+- **Keycloak** wird selbst administriert: Client, Rollen und Gruppen-Mapper laut [Betrieb](./betrieb.md#2-keycloak-einrichten).
+- **Speicherung der Workspace-Szenen**: serverseitig verschlüsselt statt Ende-zu-Ende, damit Freigaben, Nur-Lese-Links, Vorschaubilder und später Suche, API, MCP und KI funktionieren. Ad-hoc-Sitzungen und Teilen-Links bleiben Ende-zu-Ende-verschlüsselt.

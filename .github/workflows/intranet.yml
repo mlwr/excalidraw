@@ -52,5 +52,5 @@ jobs:
         run: docker build -f deploy/docker/Dockerfile -t excalidraw-intranet .
       - name: Lint the Helm chart
         run: >-
-          docker run --rm -v "$PWD/deploy/helm:/charts" -w /charts alpine/helm:3.19.0 lint excalidraw --set oidc.issuerUrl=https://sso.example/realms/company --set oidc.clientSecret=test --set database.url=postgres://user:pass@db:5432/excalidraw
+          docker run --rm -v "$PWD/deploy/helm:/charts" -w /charts alpine/helm:3.19.0 lint excalidraw --set oidc.issuerUrl=https://sso.example/realms/company --set oidc.clientSecret=test --set database.url=postgres://user:pass@db:5432/excalidraw --set encryption.key=dGVzdC1rZXktZm9yLWhlbG0tbGludC1vbmx5LTEyMzQ=
 

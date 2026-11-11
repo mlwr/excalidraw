@@ -39,6 +39,14 @@ oidc:
 session:
   ttlHours: 10
 
+# Master key that encrypts the per-scene keys (envelope encryption).
+# required: 32 random bytes, base64 (`openssl rand -base64 32`).
+# Back it up: without it, stored scenes can no longer be decrypted.
+encryption:
+  key: ""
+  existingSecret: ""
+  existingSecretKey: data-encryption-key
+
 database:
   # PostgreSQL connection string, e.g.
   # postgres://excalidraw:secret@postgres.db.svc:5432/excalidraw?sslmode=require
