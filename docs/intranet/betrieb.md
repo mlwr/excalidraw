@@ -38,6 +38,8 @@ In der Admin-Konsole von Keycloak im gewünschten Realm:
 
 Soll nur ein Teil der Belegschaft Zugriff haben, `OIDC_REQUIRED_ROLE=excalidraw-user` setzen. Wer die Rolle nicht hat, sieht nach dem Login einen Hinweis statt der App.
 
+Sollen nur bestimmte Personen API-Tokens für Skripte und KI-Assistenten bekommen, eine weitere Client-Rolle (z. B. `excalidraw-api`) anlegen, zuweisen und im Chart `api.requiredRole: excalidraw-api` setzen. Rollen werden bei der Anmeldung übernommen: Wer die Rolle verliert, kann seine Tokens nach dem nächsten Login nicht mehr benutzen.
+
 ## 3. Mit Helm installieren
 
 Secrets vorab anlegen (empfohlen statt Klartext in den Values):
@@ -111,6 +113,7 @@ Hinweise:
 - `postgresql.enabled: true` startet eine einfache Datenbank im Cluster, nur für Testumgebungen.
 - Szenen (verschlüsselt) liegen immer in PostgreSQL, Bilder und Vorschaubilder je nach `storage.driver` in PostgreSQL (Standard) oder im S3-Bucket. Mit eigenem S3 ist `s3` die bessere Wahl: Bilder sind bis zu 25 MB groß und blähen sonst Datenbank und Backups auf. Ein Wechsel später verschiebt bestehende Bilder nicht.
 - Ohne `encryption.key` oder `encryption.existingSecret` bricht `helm install` mit einer Meldung ab.
+- REST-API und MCP-Server sind eingeschaltet (`api.enabled`, `api.mcpEnabled`) und laufen über denselben Ingress wie die App (`/api/v1`, `/mcp`). Clients außerhalb des Browsers brauchen also nur die interne CA, keinen weiteren Endpunkt.
 
 ## 4. Konfiguration (Server)
 
@@ -148,6 +151,11 @@ Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. 
 | `CSP_FRAME_SRC` | leer | Zusätzliche Origins für eingebettete Inhalte |
 | `CSP_FRAME_ANCESTORS` | leer | Origins, die Excalidraw einbetten dürfen |
 | `LIBRARY_BROWSE_URL` | leer | Interner Bibliothekskatalog (später) |
+| `API_ENABLED` | `true` | REST-API unter `/api/v1` und API-Tokens |
+| `MCP_ENABLED` | `true` | MCP-Server unter `/mcp` (braucht die API) |
+| `API_TOKEN_MAX_DAYS` | `365` | Längste Gültigkeit eines Tokens in Tagen |
+| `API_REQUIRED_ROLE` | leer | Keycloak-Rolle, ohne die niemand Tokens anlegen oder benutzen darf; leer = alle (Admins dürfen immer) |
+| `API_RATE_LIMIT_PER_MINUTE` | `300` | Anfragen pro Token und Minute |
 | `TRUST_PROXY` | `1` | Vertrauenswürdige Proxy-Hops vor dem Pod |
 | `PORT`, `HOST` | `8080`, `0.0.0.0` | Adresse des Servers |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
@@ -158,5 +166,6 @@ Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. 
 - **Health**: `GET /healthz` (Prozess lebt), `GET /readyz` (Datenbank und Speicher erreichbar). Ein Ausfall von Keycloak nimmt Pods nicht aus dem Dienst; laufende Sitzungen arbeiten weiter, neue Anmeldungen schlagen fehl.
 - **Logs**: JSON-Zeilen auf stdout, Cookies und Authorization-Header werden geschwärzt.
 - **Backup**: PostgreSQL (`pg_dump`), bei `STORAGE_DRIVER=s3` zusätzlich der Bucket, und einmalig der `DATA_ENCRYPTION_KEY` an einem getrennten Ort. Nur alle drei zusammen ergeben eine lesbare Wiederherstellung; Dump und Bucket allein enthalten nur Chiffretext.
-- **Gelöschte Szenen** sind vorerst nur ausgeblendet (`deleted_at`) und bleiben in der Datenbank. Papierkorb und endgültiges Löschen folgen mit W5 und S3 in Phase 4.
+- **Gelöschte Szenen** sind vorerst nur ausgeblendet (`deleted_at`) und bleiben in der Datenbank. Papierkorb und endgültiges Löschen folgen mit W5 und S3 in Phase 4. Gleiches gilt für gelöschte Kommentare.
+- **API-Tokens** einer Person widerrufen: Die Person selbst im Dashboard; im Notfall `update api_tokens set revoked_at = now() where user_id = '<id>';`.
 - **Updates**: Image-Tag erhöhen und `helm upgrade`; Migrationen laufen beim Start.

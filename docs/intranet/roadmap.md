@@ -8,7 +8,7 @@ Grundlage ist die Priorisierung vom 11.11.2026 (Muss, Soll, Kann, Gestrichen) de
 | --- | --- | --- |
 | 1 Fundament | B1 Server mit Datenbank, B2 Keycloak-SSO, B3 Rollen und Gruppen, B4 Echtzeit-Server, B5 keine Internet-Aufrufe, B6 Deployment (Helm), S1 Sicherheits-Grundschutz, E1 Bilder bis 4K | umgesetzt |
 | 2 Workspace | W2 Szenen auf dem Server, W1 Dashboard, W3 Collections, T1 Teilen mit Personen und Teams, T2 Nur-Lese-Links, Z1 dauerhafte Live-Zusammenarbeit | umgesetzt |
-| 3 Kommentare und Schnittstellen | Z2 Kommentare, I1 REST-API, I2 MCP-Server | geplant |
+| 3 Kommentare und Schnittstellen | Z2 Kommentare, I1 REST-API, I2 MCP-Server | umgesetzt |
 | 4 Soll: Ablage und Betrieb | W5 Papierkorb, W6 Suche, W7 Versionsverlauf, W8 Aktivitäts-Feed, W9 Export, W10 mehrere Workspaces, T5 Admin-Richtlinien, S2 Audit-Log, S3 Löschkonzept, B7 Monitoring/Backups, B8 Branding | geplant |
 | 5 Soll: Zusammenarbeit, Präsentation, KI, Bibliotheken | Z3 Benachrichtigungen, Z4 Spotlight, T3 Einbetten, P1 Präsentationsmodus, P7 Export PDF/PPTX, K1 KI mit internem Sprachmodell, K2 KI-Steuerung, L1 persönliche Bibliothek, L2 Team-Bibliotheken, E4 PDF-Import | geplant |
 | 6 Kann | E2, E3, I3, L3, P2–P6, S4, W4 nach Bedarf | offen |
@@ -31,6 +31,22 @@ Bekannte Grenzen, die später folgen:
 - Kein Austausch von Schlüsseln im laufenden Betrieb, weder des Hauptschlüssels noch der Szenenschlüssel (Schlüsselrotation, mit S3 in Phase 4). Wer früher Zugriff hatte, kennt den Szenenschlüssel noch; ohne Zugriff auf Server, Datenbank oder Backups nützt er ihm nichts.
 - Das Verzeichnis kennt nur Personen, die sich schon einmal angemeldet haben.
 - Gruppen und Rollen werden bei der Anmeldung aus Keycloak übernommen; Änderungen in Keycloak wirken mit der nächsten Anmeldung (spätestens nach `SESSION_TTL_HOURS`).
+
+### Phase 3 im Detail
+
+- **Z2** Kommentare an einer Stelle oder an einem Element (wandern mit), Antworten, „Erledigt“, Bearbeiten und Löschen, Liste offener und erledigter Kommentare, live bei allen, die die Szene geöffnet haben. Auch Personen mit Leserecht kommentieren. Texte sind mit dem Szenenschlüssel verschlüsselt.
+- **I1** REST-API unter `/api/v1` mit OpenAPI-Beschreibung: Szenen und Collections, Export und Import als `.excalidraw` mit Bildern, Elemente hinzufügen, ändern und löschen, Diagramme aus Knoten und Kanten, Kommentare ([REST-API](./api.md)).
+- **I2** MCP-Server unter `/mcp` (Streamable HTTP) mit Werkzeugen zum Suchen, Lesen, Zeichnen, Ändern und Kommentieren ([MCP](./mcp.md)).
+- Persönliche API-Tokens im Dashboard: nur lesen oder lesen und schreiben, mit Ablaufzeit, widerrufbar, optional nur für eine Keycloak-Rolle.
+- Was über API oder MCP geändert wird, erscheint sofort in offenen Editoren. Der Server erzeugt Formen, Beschriftungen und Pfeile mit der Element-Logik des Editors selbst.
+
+Bekannte Grenzen:
+
+- Erwähnungen (@) werden gespeichert, aber noch nicht gemeldet; Benachrichtigungen folgen mit Z3 in Phase 5.
+- Szenen, die nur per API entstehen oder geändert werden, bekommen ihr Vorschaubild erst, wenn jemand sie im Browser öffnet.
+- Kommentare sind auf Smartphones noch nicht bedienbar (Markierungen ja, Liste und Eingabe nein).
+- MCP-Clients melden sich mit persönlichen Tokens an. Anmeldung per OAuth über Keycloak (MCP-Autorisierung) wäre eine spätere Ausbaustufe.
+- Diagramme werden in Ebenen mit geraden Pfeilen angeordnet; rechtwinklige Pfeile lassen sich über API und MCP noch nicht anlegen.
 
 ## Priorisierung
 

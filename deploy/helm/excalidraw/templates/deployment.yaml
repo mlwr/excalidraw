@@ -105,6 +105,18 @@ spec:
                   name: {{ $secretName }}
                   key: data-encryption-key
                   {{- end }}
+            - name: API_ENABLED
+              value: {{ .Values.api.enabled | quote }}
+            - name: MCP_ENABLED
+              value: {{ .Values.api.mcpEnabled | quote }}
+            - name: API_TOKEN_MAX_DAYS
+              value: {{ .Values.api.tokenMaxDays | quote }}
+            {{- if .Values.api.requiredRole }}
+            - name: API_REQUIRED_ROLE
+              value: {{ .Values.api.requiredRole | quote }}
+            {{- end }}
+            - name: API_RATE_LIMIT_PER_MINUTE
+              value: {{ .Values.api.rateLimitPerMinute | quote }}
             - name: SESSION_TTL_HOURS
               value: {{ .Values.session.ttlHours | quote }}
             - name: DATABASE_URL

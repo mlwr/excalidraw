@@ -47,6 +47,17 @@ encryption:
   existingSecret: ""
   existingSecretKey: data-encryption-key
 
+# REST API (/api/v1) and MCP server (/mcp) with personal API tokens
+api:
+  enabled: true
+  mcpEnabled: true
+  # longest validity of a token in days
+  tokenMaxDays: 365
+  # Keycloak role needed to create and use tokens; empty = everyone
+  requiredRole: ""
+  # requests per token and minute
+  rateLimitPerMinute: 300
+
 database:
   # PostgreSQL connection string, e.g.
   # postgres://excalidraw:secret@postgres.db.svc:5432/excalidraw?sslmode=require
