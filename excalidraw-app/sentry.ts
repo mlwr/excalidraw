@@ -2,26 +2,16 @@ import { getFeatureFlag } from "@excalidraw/common";
 import * as Sentry from "@sentry/browser";
 import callsites from "callsites";
 
-const SentryEnvHostnameMap: { [key: string]: string } = {
-  "excalidraw.com": "production",
-  "staging.excalidraw.com": "staging",
-  "vercel.app": "staging",
-};
-
-const SENTRY_DISABLED = import.meta.env.VITE_APP_DISABLE_SENTRY === "true";
-
-// Disable Sentry locally or inside the Docker to avoid noise/respect privacy
-const onlineEnv =
-  !SENTRY_DISABLED &&
-  Object.keys(SentryEnvHostnameMap).find(
-    (item) => window.location.hostname.indexOf(item) >= 0,
-  );
+// Intranet fork: errors are only reported when an internal Sentry/GlitchTip
+// DSN is configured at build time. Upstream's hostname-based DSN would send
+// reports to sentry.io for host names such as "excalidraw.company.example".
+const SENTRY_DSN = import.meta.env.VITE_APP_SENTRY_DSN || undefined;
+const SENTRY_ENABLED =
+  !!SENTRY_DSN && import.meta.env.VITE_APP_DISABLE_SENTRY !== "true";
 
 Sentry.init({
-  dsn: onlineEnv
-    ? "https://7bfc596a5bf945eda6b660d3015a5460@sentry.io/5179260"
-    : undefined,
-  environment: onlineEnv ? SentryEnvHostnameMap[onlineEnv] : undefined,
+  dsn: SENTRY_ENABLED ? SENTRY_DSN : undefined,
+  environment: import.meta.env.VITE_APP_SENTRY_ENVIRONMENT || undefined,
   release: import.meta.env.VITE_APP_GIT_SHA,
   ignoreErrors: [
     "undefined is not an object (evaluating 'window.__pad.performLoop')", // Only happens on Safari, but spams our servers. Doesn't break anything

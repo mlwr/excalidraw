@@ -5,7 +5,7 @@ import path from "node:path";
 import fastifyStatic from "@fastify/static";
 
 import type { Config } from "../config.js";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 
 const NO_CACHE_FILES = new Set([
   "index.html",
@@ -111,6 +111,18 @@ export const registerStatic = async (app: FastifyInstance, config: Config) => {
     },
   });
 
+  const sendIndexHtml = (reply: FastifyReply) => {
+    for (const [name, value] of Object.entries(securityHeaders)) {
+      reply.header(name, value);
+    }
+    return reply
+      .header("cache-control", "no-cache")
+      .type("text/html; charset=utf-8")
+      .send(indexHtml);
+  };
+
+  app.get("/", (_request, reply) => sendIndexHtml(reply));
+
   // single page app: unknown non-API GET routes get index.html
   app.setNotFoundHandler((request, reply) => {
     const isApi =
@@ -121,12 +133,6 @@ export const registerStatic = async (app: FastifyInstance, config: Config) => {
         .header("cache-control", "no-store")
         .send({ error: "not_found", message: "not_found" });
     }
-    for (const [name, value] of Object.entries(securityHeaders)) {
-      reply.header(name, value);
-    }
-    return reply
-      .header("cache-control", "no-cache")
-      .type("text/html; charset=utf-8")
-      .send(indexHtml);
+    return sendIndexHtml(reply);
   });
 };

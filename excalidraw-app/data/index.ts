@@ -29,11 +29,10 @@ import type {
 } from "@excalidraw/excalidraw/types";
 import type { MakeBrand } from "@excalidraw/common/utility-types";
 
-import {
-  DELETED_ELEMENT_TIMEOUT,
-  FILE_UPLOAD_MAX_BYTES,
-  ROOM_ID_BYTES,
-} from "../app_constants";
+import { DELETED_ELEMENT_TIMEOUT, ROOM_ID_BYTES } from "../app_constants";
+import { getMaxFileUploadBytes } from "../intranet/session";
+
+import { SESSION_EXPIRED_MESSAGE } from "../intranet/api";
 
 import { encodeFilesForUpload } from "./FileManager";
 import { saveFilesToFirebase } from "./firebase";
@@ -270,13 +269,17 @@ export const exportToBackend = async (
     const filesToUpload = await encodeFilesForUpload({
       files: filesMap,
       encryptionKey,
-      maxBytes: FILE_UPLOAD_MAX_BYTES,
+      maxBytes: getMaxFileUploadBytes(),
     });
 
     const response = await fetch(BACKEND_V2_POST, {
       method: "POST",
+      headers: { "content-type": "application/octet-stream" },
       body: payload.buffer,
     });
+    if (response.status === 401) {
+      return { url: null, errorMessage: SESSION_EXPIRED_MESSAGE };
+    }
     const json = await response.json();
     if (json.id) {
       const url = new URL(window.location.href);

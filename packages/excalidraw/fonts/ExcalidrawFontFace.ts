@@ -163,8 +163,12 @@ export class ExcalidrawFontFace {
       });
     }
 
-    // fallback url for bundled fonts
-    urls.push(new URL(assetUrl, ExcalidrawFontFace.ASSETS_FALLBACK_URL));
+    // fallback url for bundled fonts; an explicitly empty
+    // VITE_APP_ASSETS_FALLBACK_URL disables it (self-hosted deployments
+    // without internet access)
+    if (import.meta.env.VITE_APP_ASSETS_FALLBACK_URL !== "") {
+      urls.push(new URL(assetUrl, ExcalidrawFontFace.ASSETS_FALLBACK_URL));
+    }
 
     return urls;
   }

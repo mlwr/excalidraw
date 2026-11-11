@@ -6,7 +6,6 @@ import { ViteEjsPlugin } from "vite-plugin-ejs";
 import { VitePWA } from "vite-plugin-pwa";
 import checker from "vite-plugin-checker";
 import { createHtmlPlugin } from "vite-plugin-html";
-import Sitemap from "vite-plugin-sitemap";
 import { woff2BrowserPlugin } from "../scripts/woff2/woff2-vite-plugins";
 
 import { MERMAID_CHUNKS_LIST_NAME } from "./data/cacheMermaidChunks";
@@ -148,6 +147,16 @@ export default defineConfig(({ mode }) => {
       port: Number(envVars.VITE_APP_PORT || 3000),
       // open the browser
       open: true,
+      // intranet fork: login, storage and realtime come from excalidraw-server
+      proxy: {
+        "/api": {
+          target: envVars.VITE_APP_DEV_BACKEND_URL || "http://localhost:8080",
+        },
+        "/socket.io": {
+          target: envVars.VITE_APP_DEV_BACKEND_URL || "http://localhost:8080",
+          ws: true,
+        },
+      },
     },
     // We need to specify the envDir since now there are no
     //more located in parallel with the vite.config.ts file but in parent dir
@@ -271,13 +280,6 @@ export default defineConfig(({ mode }) => {
       assetsInlineLimit: 0,
     },
     plugins: [
-      Sitemap({
-        hostname: "https://excalidraw.com",
-        outDir: "build",
-        changefreq: "monthly",
-        // its static in public folder
-        generateRobotsTxt: false,
-      }),
       woff2BrowserPlugin(),
       lazyChunksPlugin(
         /[\\/]node_modules[\\/]@excalidraw[\\/]mermaid-to-excalidraw[\\/]/,
@@ -317,10 +319,10 @@ export default defineConfig(({ mode }) => {
             // via a static import from the main bundle, defeating lazy
             // loading. So we exclude it by name instead.
             "**/CodeMirrorEditor-*.js",
-            // lazy-loaded Firebase SDK, only needed for collab/sharing, which
-            // require network anyway
-            "**/firebaseSDK-*.js",
           ],
+          // login, API and websockets must always reach the server, never
+          // the cached app shell (otherwise the login redirect would loop)
+          navigateFallbackDenylist: [/^\/api\//, /^\/socket\.io\//],
           // mermaid chunks are excluded here rather than via `globIgnores`
           // as their file names are arbitrary
           manifestTransforms: [

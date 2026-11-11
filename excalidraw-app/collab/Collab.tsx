@@ -56,7 +56,6 @@ import type { Mutable, ValueOf } from "@excalidraw/common/utility-types";
 import { appJotaiStore, atom } from "../app-jotai";
 import {
   CURSOR_SYNC_TIMEOUT,
-  FILE_UPLOAD_MAX_BYTES,
   FIREBASE_STORAGE_PREFIXES,
   INITIAL_SCENE_UPDATE_TIMEOUT,
   LOAD_IMAGES_TIMEOUT,
@@ -88,6 +87,7 @@ import {
   saveUsernameToLocalStorage,
 } from "../data/localStorage";
 import { resetBrowserStateVersions } from "../data/tabSync";
+import { getCurrentUser, getMaxFileUploadBytes } from "../intranet/session";
 
 import { collabErrorIndicatorAtom } from "./CollabError";
 import Portal from "./Portal";
@@ -155,7 +155,8 @@ class Collab extends PureComponent<CollabProps, CollabState> {
     this.state = {
       errorMessage: null,
       dialogNotifiedErrors: {},
-      username: importUsernameFromLocalStorage() || "",
+      username:
+        getCurrentUser()?.name || importUsernameFromLocalStorage() || "",
       activeRoomLink: null,
     };
     this.portal = new Portal(this);
@@ -180,7 +181,7 @@ class Collab extends PureComponent<CollabProps, CollabState> {
           files: await encodeFilesForUpload({
             files: addedFiles,
             encryptionKey: roomKey,
-            maxBytes: FILE_UPLOAD_MAX_BYTES,
+            maxBytes: getMaxFileUploadBytes(),
           }),
         });
 
@@ -542,9 +543,12 @@ class Collab extends PureComponent<CollabProps, CollabState> {
 
     try {
       this.portal.socket = this.portal.open(
-        socketIOClient(import.meta.env.VITE_APP_WS_SERVER_URL, {
-          transports: ["websocket", "polling"],
-        }),
+        socketIOClient(
+          import.meta.env.VITE_APP_WS_SERVER_URL || window.location.origin,
+          {
+            transports: ["websocket", "polling"],
+          },
+        ),
         roomId,
         roomKey,
       );

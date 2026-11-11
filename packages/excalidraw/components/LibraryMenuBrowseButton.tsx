@@ -13,6 +13,11 @@ const LibraryMenuBrowseButton = ({
   theme: UIAppState["theme"];
   id: string;
 }) => {
+  // an explicitly empty VITE_APP_LIBRARY_URL disables the public library
+  // catalog (e.g. self-hosted deployments without internet access)
+  if (import.meta.env.VITE_APP_LIBRARY_URL === "") {
+    return null;
+  }
   const referrer =
     libraryReturnUrl || window.location.origin + window.location.pathname;
   return (

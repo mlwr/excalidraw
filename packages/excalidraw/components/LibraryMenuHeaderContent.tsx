@@ -220,15 +220,17 @@ export const LibraryDropdownMenuButton: React.FC<{
               {t("buttons.export")}
             </DropdownMenu.Item>
           )}
-          {itemsSelected && (
-            <DropdownMenu.Item
-              icon={publishIcon}
-              onSelect={() => setShowPublishLibraryDialog(true)}
-              data-testid="lib-dropdown--remove"
-            >
-              {t("buttons.publishLibrary")}
-            </DropdownMenu.Item>
-          )}
+          {itemsSelected &&
+            // explicitly empty = no library catalog to publish to
+            import.meta.env.VITE_APP_LIBRARY_BACKEND !== "" && (
+              <DropdownMenu.Item
+                icon={publishIcon}
+                onSelect={() => setShowPublishLibraryDialog(true)}
+                data-testid="lib-dropdown--remove"
+              >
+                {t("buttons.publishLibrary")}
+              </DropdownMenu.Item>
+            )}
           {!!items.length && (
             <DropdownMenu.Item
               onSelect={() => setShowRemoveLibAlert(true)}

@@ -60,7 +60,8 @@ export class S3BlobStore implements BlobStore {
     const response = await this.client.fetch(this.objectUrl(key), {
       method: "PUT",
       headers,
-      body: data,
+      // copy into a plain Uint8Array: valid fetch body for every typing
+      body: new Uint8Array(data),
     });
     if (!response.ok) {
       throw new Error(`S3 PUT ${key} failed with status ${response.status}`);

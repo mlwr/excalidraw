@@ -10,6 +10,8 @@ interface ImportMetaEnv {
   VITE_APP_BACKEND_V2_POST_URL: string;
 
   VITE_APP_LIBRARY_URL: string;
+  // "" disables the esm.sh font fallback (self-hosted, no internet)
+  VITE_APP_ASSETS_FALLBACK_URL: string;
   VITE_APP_LIBRARY_BACKEND: string;
 
   // collaboration WebSocket server (https: string

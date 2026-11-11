@@ -8,20 +8,26 @@ interface ImportMetaEnv {
   VITE_APP_BACKEND_V2_GET_URL: string;
   VITE_APP_BACKEND_V2_POST_URL: string;
 
-  // collaboration WebSocket server (https: string
+  // collaboration WebSocket server; empty = same origin (intranet backend)
   VITE_APP_WS_SERVER_URL: string;
 
   // set this only if using the collaboration workflow we use on excalidraw.com
   VITE_APP_PORTAL_URL: string;
   VITE_APP_AI_BACKEND: string;
 
-  VITE_APP_FIREBASE_CONFIG: string;
-
   // whether to disable live reload / HMR. Usuaully what you want to do when
   // debugging Service Workers.
   VITE_APP_DEV_DISABLE_LIVE_RELOAD: string;
 
   VITE_APP_DISABLE_SENTRY: string;
+  // internal Sentry/GlitchTip DSN; empty = no error reporting
+  VITE_APP_SENTRY_DSN: string;
+  VITE_APP_SENTRY_ENVIRONMENT: string;
+
+  // intranet backend for the dev server proxy (/api, /socket.io)
+  VITE_APP_DEV_BACKEND_URL: string;
+  // "true" = start without login (frontend-only development, no backend)
+  VITE_APP_DISABLE_AUTH: string;
 
   // Set this flag to false if you want to open the overlay by default
   VITE_APP_COLLAPSE_OVERLAY: string;
@@ -31,10 +37,6 @@ interface ImportMetaEnv {
 
   // Enable PWA in dev server
   VITE_APP_ENABLE_PWA: string;
-
-  VITE_APP_PLUS_LP: string;
-
-  VITE_APP_PLUS_APP: string;
 
   VITE_APP_GIT_SHA: string;
 

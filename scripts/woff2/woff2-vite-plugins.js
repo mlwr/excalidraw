@@ -1,6 +1,35 @@
 // define `EXCALIDRAW_ASSET_PATH` as a SSOT
-const OSS_FONTS_CDN = "https://excalidraw.nyc3.cdn.digitaloceanspaces.com/oss/";
+//
+// Intranet fork: fonts are served by the app itself unless a font CDN is set
+// explicitly at build time (EXCALIDRAW_FONTS_CDN), so a default build makes
+// no requests to the internet.
+const OSS_FONTS_CDN = process.env.EXCALIDRAW_FONTS_CDN || "";
 const OSS_FONTS_FALLBACK = "/";
+
+// preloaded default fonts (files emitted to `build/fonts/...`)
+const PRELOADED_FONTS = [
+  "fonts/Excalifont/Excalifont-Regular-a88b72a24fb54c9f94e3b5fdaa7481c9.woff2",
+  // For Nunito only preload the latin range, which should be good enough for now
+  "fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTQ3j6zbXWjgeg.woff2",
+  "fonts/ComicShanns/ComicShanns-Regular-279a7b317d12eb88de06167bd672b4b4.woff2",
+];
+
+const localFontsHtml = () => `<script>
+        // fonts are bundled with the app (no CDN)
+        window.EXCALIDRAW_ASSET_PATH = window.location.origin;
+      </script>
+
+      <!-- Preload all default fonts to avoid swap on init -->
+${PRELOADED_FONTS.map(
+  (font) => `      <link
+        rel="preload"
+        href="/${font}"
+        as="font"
+        type="font/woff2"
+        crossorigin="anonymous"
+      />`,
+).join("\n")}
+    `;
 
 /**
  * Custom vite plugin for auto-prefixing `EXCALIDRAW_ASSET_PATH` woff2 fonts in `excalidraw-app`.
@@ -19,7 +48,12 @@ module.exports.woff2BrowserPlugin = () => {
     transform(code, id) {
       // using copy / replace as fonts defined in the `.css` don't have to be manually copied over (vite/rollup does this automatically),
       // but at the same time can't be easily prefixed with the `EXCALIDRAW_ASSET_PATH` only for the `excalidraw-app`
-      if (!isDev && id.endsWith("/excalidraw/fonts/fonts.css")) {
+      // without a CDN, fonts.css keeps its relative URLs, which vite bundles
+      if (
+        !isDev &&
+        OSS_FONTS_CDN &&
+        id.endsWith("/excalidraw/fonts/fonts.css")
+      ) {
         return `/* WARN: The following content is generated during excalidraw-app build */
 
       @font-face {
@@ -61,6 +95,17 @@ module.exports.woff2BrowserPlugin = () => {
         style: normal;
         display: swap;
       }`;
+      }
+
+      if (
+        !isDev &&
+        !OSS_FONTS_CDN &&
+        id.endsWith("excalidraw-app/index.html")
+      ) {
+        return code.replace(
+          "<!-- PLACEHOLDER:EXCALIDRAW_APP_FONTS -->",
+          localFontsHtml(),
+        );
       }
 
       if (!isDev && id.endsWith("excalidraw-app/index.html")) {

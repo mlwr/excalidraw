@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { atom, useAtom, useAtomValue } from "../app-jotai";
 import { activeRoomLinkAtom } from "../collab/Collab";
+import { getCurrentUser } from "../intranet/session";
 
 import "./ShareDialog.scss";
 import { QRCode } from "./QRCode";
@@ -69,6 +70,7 @@ const ActiveRoomDialog = ({
   const ref = useRef<HTMLInputElement>(null);
   const isShareSupported = "share" in navigator;
   const { onCopy, copyStatus } = useCopyStatus();
+  const currentUser = getCurrentUser();
 
   const copyRoomLink = async () => {
     try {
@@ -107,13 +109,18 @@ const ActiveRoomDialog = ({
       <h3 className="ShareDialog__active__header">
         {t("labels.liveCollaboration").replace(/\./g, "")}
       </h3>
-      <TextField
-        defaultValue={collabAPI.getUsername()}
-        placeholder="Your name"
-        label="Your name"
-        onChange={collabAPI.setUsername}
-        onKeyDown={(event) => event.key === KEYS.ENTER && handleClose()}
-      />
+      {currentUser ? (
+        // intranet fork: the name comes from the company login
+        <TextField label="Your name" value={currentUser.name} readonly />
+      ) : (
+        <TextField
+          defaultValue={collabAPI.getUsername()}
+          placeholder="Your name"
+          label="Your name"
+          onChange={collabAPI.setUsername}
+          onKeyDown={(event) => event.key === KEYS.ENTER && handleClose()}
+        />
+      )}
       <div className="ShareDialog__active__linkRow">
         <TextField
           ref={ref}
