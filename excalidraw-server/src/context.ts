@@ -12,6 +12,12 @@ export interface RealtimeHooks {
   scenePresence: () => Promise<Map<string, { id: string; name: string }[]>>;
   /** disconnect everybody from a scene (e.g. after it was deleted) */
   closeSceneRoom: (sceneId: string) => void;
+  /**
+   * re-check the rights of everyone connected to these scenes (after
+   * sharing changes); whoever lost access or changed between viewer and
+   * editor is disconnected and reloads the scene
+   */
+  recheckScenes: (sceneIds: string[]) => Promise<void>;
 }
 
 export interface AppContext {

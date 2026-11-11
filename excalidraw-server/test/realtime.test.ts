@@ -114,6 +114,59 @@ describeWithDb("realtime collaboration", () => {
     expect(Array.from(new Uint8Array(data))).toEqual([1, 2, 3]);
   });
 
+  it("relays the viewport to followers in the same room only", async () => {
+    await start();
+    const bobCookie = await env.login(bob);
+    const aliceCookie = await env.login(alice);
+    const roomId = "follow0123456789abcd";
+
+    const leader = open(bobCookie);
+    await waitFor(leader, "init-room");
+    const first = waitFor(leader, "first-in-room");
+    leader.emit("join-room", roomId);
+    await first;
+    const follower = open(aliceCookie);
+    await waitFor(follower, "init-room");
+    const joined = waitFor(leader, "new-user");
+    follower.emit("join-room", roomId);
+    await joined;
+
+    // someone outside the room can't follow
+    const stranger = open(aliceCookie);
+    await waitFor(stranger, "init-room");
+    stranger.emit("user-follow", {
+      userToFollow: { socketId: leader.id },
+      action: "FOLLOW",
+    });
+
+    const followedBy = waitFor<string[]>(leader, "user-follow-room-change");
+    follower.emit("user-follow", {
+      userToFollow: { socketId: leader.id },
+      action: "FOLLOW",
+    });
+    expect(await followedBy).toEqual([follower.id]);
+
+    // the app sends the viewport to "follow@<own socket id>"
+    const bounds = waitFor<[ArrayBuffer, Uint8Array]>(
+      follower,
+      "client-broadcast",
+    );
+    let strangerGotIt = false;
+    stranger.on("client-broadcast", () => {
+      strangerGotIt = true;
+    });
+    leader.emit(
+      "server-volatile-broadcast",
+      `follow@${leader.id}`,
+      new Uint8Array([7, 7]),
+      new Uint8Array([1]),
+    );
+    const [data] = await bounds;
+    expect(Array.from(new Uint8Array(data))).toEqual([7, 7]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(strangerGotIt).toBe(false);
+  });
+
   it("disconnects sockets when the session is logged out", async () => {
     await start();
     const cookie = await env.login(bob);

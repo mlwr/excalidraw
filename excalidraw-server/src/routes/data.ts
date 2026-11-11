@@ -2,6 +2,7 @@ import { sql } from "kysely";
 
 import { randomToken } from "../util/crypto.js";
 import { sendError } from "../util/http.js";
+import { isCounter, isCounterString } from "../util/validate.js";
 
 import type { AppContext } from "../context.js";
 import type { FastifyInstance, preHandlerHookHandler } from "fastify";
@@ -34,13 +35,13 @@ const isSceneBody = (body: unknown): body is SceneBody => {
   const value = body as Record<string, unknown>;
   return (
     typeof value.sceneVersion === "number" &&
-    Number.isFinite(value.sceneVersion) &&
+    // bigint column: reject values Postgres can't take (500 otherwise)
+    isCounter(Math.trunc(value.sceneVersion)) &&
     typeof value.iv === "string" &&
     typeof value.ciphertext === "string" &&
     (value.expectedRevision === null ||
-      typeof value.expectedRevision === "number" ||
-      (typeof value.expectedRevision === "string" &&
-        /^\d+$/.test(value.expectedRevision)))
+      isCounter(value.expectedRevision) ||
+      isCounterString(value.expectedRevision))
   );
 };
 

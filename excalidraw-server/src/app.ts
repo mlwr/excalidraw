@@ -1,3 +1,5 @@
+import { STATUS_CODES } from "node:http";
+
 import fastifyCookie from "@fastify/cookie";
 import fastifyRateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
@@ -11,12 +13,13 @@ import { attachRealtime } from "./realtime/socket.js";
 import { registerDataRoutes } from "./routes/data.js";
 import { registerStatic } from "./routes/static.js";
 import { createBlobStore } from "./storage/index.js";
+import { openSceneKey } from "./util/crypto.js";
 import { actorOf, sceneAccess } from "./workspace/access.js";
 import { registerWorkspaceRoutes } from "./workspace/routes.js";
 
 import type { Config } from "./config.js";
 import type { AppContext, RealtimeHooks } from "./context.js";
-import type { FastifyInstance } from "fastify";
+import type { FastifyError, FastifyInstance } from "fastify";
 import type { Server } from "socket.io";
 
 const API_SECURITY_HEADERS = {
@@ -67,6 +70,7 @@ export const buildApp = async (
     disconnectSessions: () => {},
     scenePresence: async () => new Map(),
     closeSceneRoom: () => {},
+    recheckScenes: async () => {},
   };
 
   const ctx: AppContext = {
@@ -79,6 +83,7 @@ export const buildApp = async (
       disconnectSessions: (ids) => realtimeHooks.disconnectSessions(ids),
       scenePresence: () => realtimeHooks.scenePresence(),
       closeSceneRoom: (id) => realtimeHooks.closeSceneRoom(id),
+      recheckScenes: (ids) => realtimeHooks.recheckScenes(ids),
     },
   };
 
@@ -112,6 +117,24 @@ export const buildApp = async (
     return payload;
   });
 
+  // never send internal error details (database messages, stack traces)
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    const status = error.statusCode || 500;
+    if (status < 500) {
+      return reply.code(status).send({
+        statusCode: status,
+        code: error.code,
+        error: STATUS_CODES[status],
+        message: error.message,
+      });
+    }
+    request.log.error({ err: error }, "request failed");
+    return reply
+      .code(500)
+      .header("cache-control", "no-store")
+      .send({ error: "internal_error", message: "Interner Serverfehler" });
+  });
+
   app.get("/healthz", async () => ({ status: "ok" }));
   app.get("/readyz", async (request, reply) => {
     try {
@@ -139,14 +162,22 @@ export const buildApp = async (
         .selectFrom("users")
         .selectAll()
         .where("id", "=", userId)
+        .where("disabled_at", "is", null)
         .executeTakeFirst();
       const access = user
         ? await sceneAccess(ctx.db, actorOf(user), sceneId)
         : null;
       if (!access || access.role === "none") {
-        return "none";
+        return { role: "none" };
       }
-      return access.role === "viewer" ? "viewer" : "editor";
+      if (access.role === "viewer") {
+        // the server checks what viewers send, so it needs the room key
+        return {
+          role: "viewer",
+          key: openSceneKey(config.dataEncryptionKey, access.scene.key_sealed),
+        };
+      }
+      return { role: "editor" };
     },
   );
   Object.assign(realtimeHooks, hooks);

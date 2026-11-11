@@ -51,8 +51,9 @@ const isSameOriginRequest = (request: FastifyRequest, origin: string) => {
   if (typeof fetchSite === "string") {
     return fetchSite === "same-origin" || fetchSite === "none";
   }
-  // non-browser client without Origin information
-  return true;
+  // every supported browser sends one of the two; a cookie without them is
+  // not worth the risk (API clients will use tokens, not cookies)
+  return false;
 };
 
 export const createRequireAuth = (ctx: AppContext): preHandlerHookHandler => {

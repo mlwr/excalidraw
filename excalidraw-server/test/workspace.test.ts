@@ -1,4 +1,7 @@
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+
 import { afterEach, expect, it } from "vitest";
+
 import { io as connect } from "socket.io-client";
 
 import {
@@ -30,6 +33,52 @@ const erin: FakeUser = {
   sub: "erin",
   name: "Erin Architektur",
   groups: ["/IT/Architektur"],
+};
+
+/** a collaboration message as the app encrypts it (AES-128-GCM) */
+const encryptMessage = (
+  key: string,
+  type: string,
+): [ArrayBuffer, Uint8Array] => {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(
+    "aes-128-gcm",
+    Buffer.from(key, "base64url"),
+    iv,
+  );
+  const data = Buffer.concat([
+    cipher.update(JSON.stringify({ type, payload: {} })),
+    cipher.final(),
+    cipher.getAuthTag(),
+  ]);
+  return [
+    data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+    new Uint8Array(iv),
+  ];
+};
+
+const decryptMessage = (
+  key: string,
+  data: ArrayBuffer,
+  iv: ArrayBuffer,
+): { type: string } | null => {
+  try {
+    const bytes = Buffer.from(data);
+    const decipher = createDecipheriv(
+      "aes-128-gcm",
+      Buffer.from(key, "base64url"),
+      Buffer.from(iv),
+    );
+    decipher.setAuthTag(bytes.subarray(bytes.length - 16));
+    return JSON.parse(
+      Buffer.concat([
+        decipher.update(bytes.subarray(0, bytes.length - 16)),
+        decipher.final(),
+      ]).toString("utf8"),
+    );
+  } catch {
+    return null;
+  }
 };
 
 const PNG = Buffer.from(
@@ -314,7 +363,7 @@ describeWithDb("workspace", () => {
     const owner = await client(bob);
     const reader = await client(carol);
     const outsider = await client(dave);
-    const { scene } = (
+    const { scene, key } = (
       await owner.call("POST", "/api/scenes", { name: "Live" })
     ).json();
     await owner.call("PUT", `/api/scenes/${scene.id}/grants`, {
@@ -349,7 +398,7 @@ describeWithDb("workspace", () => {
     outsiderSocket.emit("join-room", room);
     expect(await denied).toBe(room);
 
-    const readerSocket = await open(reader.cookie);
+    let readerSocket = await open(reader.cookie);
     const joined = once(ownerSocket, "new-user");
     readerSocket.emit("join-room", room);
     await joined;
@@ -360,24 +409,256 @@ describeWithDb("workspace", () => {
       listed.scenes[0].activeUsers.map((u: { name: string }) => u.name).sort(),
     ).toEqual(["Bob Beispiel", "Carol IT"]);
 
-    // the viewer's scene updates are dropped, cursor updates pass
+    // what arrives, decrypted with the scene key like the app does
     const received: string[] = [];
-    ownerSocket.on("client-broadcast", (data: ArrayBuffer) => {
-      received.push(Buffer.from(data).toString());
+    ownerSocket.on("client-broadcast", (data: ArrayBuffer, iv: ArrayBuffer) =>
+      received.push(decryptMessage(key, data, iv)?.type ?? "unreadable"),
+    );
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+
+    // the viewer can show where it is, but not change the scene: not even
+    // by sending an update the "volatile" way, or to its followers
+    const followed = once<string[]>(readerSocket, "user-follow-room-change");
+    ownerSocket.emit("user-follow", {
+      userToFollow: { socketId: readerSocket.id },
+      action: "FOLLOW",
     });
+    expect(await followed).toEqual([ownerSocket.id]);
+    const followRoom = `follow@${readerSocket.id}`;
+    // one at a time: socket.io drops volatile messages while the
+    // connection is still busy with the previous one
+    const send = async (
+      event: string,
+      target: string,
+      message: [ArrayBuffer, Uint8Array],
+    ) => {
+      readerSocket.emit(event, target, ...message);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    };
+    await send("server-broadcast", room, encryptMessage(key, "SCENE_UPDATE"));
+    await send(
+      "server-volatile-broadcast",
+      room,
+      encryptMessage(key, "SCENE_UPDATE"),
+    );
+    await send(
+      "server-volatile-broadcast",
+      room,
+      encryptMessage(key, "SCENE_INIT"),
+    );
+    await send(
+      "server-volatile-broadcast",
+      followRoom,
+      encryptMessage(key, "SCENE_UPDATE"),
+    );
+    await send("server-volatile-broadcast", room, [
+      new Uint8Array([1, 2, 3]).buffer,
+      new Uint8Array(12),
+    ]);
+    await send(
+      "server-volatile-broadcast",
+      room,
+      encryptMessage(key, "MOUSE_LOCATION"),
+    );
+    await send(
+      "server-volatile-broadcast",
+      followRoom,
+      encryptMessage(key, "USER_VISIBLE_SCENE_BOUNDS"),
+    );
+    await settle();
+    expect(received).toEqual(["MOUSE_LOCATION", "USER_VISIBLE_SCENE_BOUNDS"]);
+
+    // the viewer becomes editor: its connection starts over and may edit
+    const upgraded = once<string>(readerSocket, "scene-access-changed");
+    const upgradeDisconnect = once<string>(readerSocket, "disconnect");
+    await owner.call("PUT", `/api/scenes/${scene.id}/grants`, {
+      grants: [{ type: "group", principal: "/IT", role: "editor" }],
+    });
+    expect(await upgraded).toBe(room);
+    expect(await upgradeDisconnect).toBe("io server disconnect");
+    readerSocket = await open(reader.cookie);
+    const rejoined = once(ownerSocket, "new-user");
+    readerSocket.emit("join-room", room);
+    await rejoined;
+    received.length = 0;
     readerSocket.emit(
       "server-broadcast",
       room,
-      Buffer.from("edit"),
-      Buffer.from("iv"),
+      ...encryptMessage(key, "SCENE_UPDATE"),
     );
-    readerSocket.emit(
-      "server-volatile-broadcast",
-      room,
-      Buffer.from("cursor"),
-      Buffer.from("iv"),
+    await settle();
+    expect(received).toEqual(["SCENE_UPDATE"]);
+
+    // access removed: the live connection ends, the owner stays
+    const revoked = once<string>(readerSocket, "scene-access-changed");
+    await owner.call("PUT", `/api/scenes/${scene.id}/grants`, { grants: [] });
+    expect(await revoked).toBe(room);
+    await settle();
+    expect(readerSocket.connected).toBe(false);
+    expect(ownerSocket.connected).toBe(true);
+  });
+
+  it("hands the scene to newcomers only from people who may edit", async () => {
+    env = await createTestEnv();
+    await env.built.app.listen({ host: "127.0.0.1", port: 0 });
+    const address = env.built.app.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("not listening");
+    }
+    const owner = await client(bob);
+    const reader = await client(carol);
+    const { scene } = (
+      await owner.call("POST", "/api/scenes", { name: "Leser zuerst" })
+    ).json();
+    await owner.call("PUT", `/api/scenes/${scene.id}/grants`, {
+      grants: [{ type: "group", principal: "/IT", role: "viewer" }],
+    });
+    const room = `scene-${scene.id}`;
+    const open = (cookie: string) => {
+      const socket = connect(`http://127.0.0.1:${address.port}`, {
+        transports: ["websocket"],
+        extraHeaders: { origin: ORIGIN, cookie },
+        reconnection: false,
+        forceNew: true,
+      });
+      sockets.push(socket);
+      return new Promise<Socket>((resolve) =>
+        socket.once("init-room", () => resolve(socket)),
+      );
+    };
+
+    const readerSocket = await open(reader.cookie);
+    const readerFirst = new Promise((resolve) =>
+      readerSocket.once("first-in-room", resolve),
     );
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(received).toEqual(["cursor"]);
+    readerSocket.emit("join-room", room);
+    await readerFirst;
+
+    // only a viewer is there, who can't send the scene: load it from the server
+    const ownerSocket = await open(owner.cookie);
+    const ownerFirst = new Promise((resolve) =>
+      ownerSocket.once("first-in-room", resolve),
+    );
+    ownerSocket.emit("join-room", room);
+    await ownerFirst;
+  });
+
+  it("answers malformed input with 400, not with server errors", async () => {
+    env = await createTestEnv();
+    const owner = await client(bob);
+    const colleague = await client(carol);
+    const created = (
+      await owner.call("POST", "/api/scenes", { name: "Teil\u0000A\tB" })
+    ).json();
+    expect(created.scene.name).toBe("Teil A B");
+    const sceneId = created.scene.id;
+
+    for (const body of [
+      { ...content(null), expectedRevision: 1.5 },
+      { ...content(null), expectedRevision: 1e21 },
+      { ...content(null), sceneVersion: 1e300 },
+      { ...content(null), sceneVersion: -1 },
+    ]) {
+      expect(
+        (await owner.call("PUT", `/api/scenes/${sceneId}/content`, body))
+          .statusCode,
+      ).toBe(400);
+    }
+    expect(
+      (
+        await owner.call("PUT", `/api/rooms/abcdef0123456789abcd/scene`, {
+          ...content(null),
+          expectedRevision: "99999999999999999999",
+        })
+      ).statusCode,
+    ).toBe(400);
+
+    expect((await owner.call("GET", "/api/scenes?q=a&q=b")).statusCode).toBe(
+      200,
+    );
+    expect((await owner.call("GET", "/api/scenes?q=%00Teil")).statusCode).toBe(
+      200,
+    );
+    expect(
+      (await owner.call("GET", "/api/directory?q=%00Carol")).statusCode,
+    ).toBe(200);
+
+    // the same group twice (once with blanks): stored once, higher role wins
+    expect(
+      (
+        await owner.call("PUT", `/api/scenes/${sceneId}/grants`, {
+          grants: [
+            { type: "group", principal: "/IT", role: "viewer" },
+            { type: "group", principal: " /IT ", role: "editor" },
+            { type: "group", principal: "/IT\u0000", role: "viewer" },
+          ],
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await owner.call("PUT", `/api/scenes/${sceneId}/grants`, {
+          grants: [
+            { type: "group", principal: "/IT", role: "viewer" },
+            { type: "group", principal: " /IT ", role: "editor" },
+          ],
+        })
+      ).statusCode,
+    ).toBe(200);
+    const stored = (
+      await owner.call("GET", `/api/scenes/${sceneId}/grants`)
+    ).json();
+    expect(stored.grants).toMatchObject([
+      { type: "group", principal: "/IT", role: "editor" },
+    ]);
+
+    // user ids in upper case still match the person
+    await owner.call("PUT", `/api/scenes/${sceneId}/grants`, {
+      grants: [
+        { type: "user", principal: colleague.id.toUpperCase(), role: "viewer" },
+      ],
+    });
+    expect(
+      (await colleague.call("GET", `/api/scenes/${sceneId}`)).json().scene.role,
+    ).toBe("viewer");
+    // "%" and "_" are searched literally
+    const sharedWith = async (q: string) =>
+      (
+        await colleague.call(
+          "GET",
+          `/api/scenes?view=shared&q=${encodeURIComponent(q)}`,
+        )
+      ).json().scenes.length;
+    expect(await sharedWith("Teil")).toBe(1);
+    expect(await sharedWith("%")).toBe(0);
+    expect(await sharedWith("T_il")).toBe(0);
+
+    // a collection must keep a manager who exists
+    const collection = (
+      await owner.call("POST", "/api/collections", { name: "Team" })
+    ).json();
+    for (const manager of [
+      { type: "group", principal: "/Gibt-es-nicht", role: "manager" },
+      {
+        type: "user",
+        principal: "00000000-0000-4000-8000-000000000000",
+        role: "manager",
+      },
+    ]) {
+      expect(
+        (
+          await owner.call("PUT", `/api/collections/${collection.id}/grants`, {
+            grants: [manager],
+          })
+        ).statusCode,
+      ).toBe(400);
+    }
+    expect(
+      (
+        await owner.call("PUT", `/api/collections/${collection.id}/grants`, {
+          grants: [{ type: "group", principal: "/IT", role: "manager" }],
+        })
+      ).statusCode,
+    ).toBe(200);
   });
 });

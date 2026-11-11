@@ -9,6 +9,14 @@ import {
   sealSceneKey,
 } from "../util/crypto.js";
 import { sendError } from "../util/http.js";
+import {
+  containsPattern,
+  hasControlChars,
+  isCounter,
+  queryParam,
+  searchText,
+  singleLine,
+} from "../util/validate.js";
 
 import {
   accessibleCollections,
@@ -53,11 +61,17 @@ const cleanName = (value: unknown): string | null => {
   if (typeof value !== "string") {
     return null;
   }
-  const name = value.replace(/\s+/g, " ").trim();
+  const name = singleLine(value).replace(/\s+/g, " ").trim();
   return name && name.length <= MAX_NAME_LENGTH ? name : null;
 };
 
 const isBase64 = (value: string) => /^[A-Za-z0-9+/]*={0,2}$/.test(value);
+
+const GRANT_RANK: Record<GrantRole, number> = {
+  viewer: 1,
+  editor: 2,
+  manager: 3,
+};
 
 const parseGrants = (
   value: unknown,
@@ -66,34 +80,40 @@ const parseGrants = (
   if (!Array.isArray(value) || value.length > 200) {
     return null;
   }
-  const grants: GrantInput[] = [];
-  const seen = new Set<string>();
+  const grants = new Map<string, GrantInput>();
   for (const item of value) {
     if (!item || typeof item !== "object") {
       return null;
     }
-    const { type, principal, role } = item as Record<string, unknown>;
+    const { type, principal: raw, role } = item as Record<string, unknown>;
     if (
       (type !== "user" && type !== "group") ||
-      typeof principal !== "string" ||
-      !principal.trim() ||
+      typeof raw !== "string" ||
+      !allowedRoles.includes(role as GrantRole)
+    ) {
+      return null;
+    }
+    // grants are matched as text: user ids in their canonical lower case
+    const principal = type === "user" ? raw.trim().toLowerCase() : raw.trim();
+    if (
+      !principal ||
       principal.length > 500 ||
-      !allowedRoles.includes(role as GrantRole) ||
+      hasControlChars(principal) ||
       (type === "user" && !UUID_RE.test(principal))
     ) {
       return null;
     }
+    // the same person or group twice: the higher role wins
     const key = `${type}:${principal}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      grants.push({
-        type,
-        principal: principal.trim(),
-        role: role as GrantRole,
-      });
+    const existing = grants.get(key);
+    if (
+      !existing ||
+      GRANT_RANK[role as GrantRole] > GRANT_RANK[existing.role]
+    ) {
+      grants.set(key, { type, principal, role: role as GrantRole });
     }
   }
-  return grants;
+  return [...grants.values()];
 };
 
 export const registerWorkspaceRoutes = (
@@ -313,6 +333,42 @@ export const registerWorkspaceRoutes = (
     return found.length === new Set(userIds).size;
   };
 
+  /** some active user is a manager: directly or through a group */
+  const hasActiveManager = async (grants: GrantInput[]) => {
+    const managers = grants.filter((grant) => grant.role === "manager");
+    const userIds = managers
+      .filter((grant) => grant.type === "user")
+      .map((grant) => grant.principal);
+    const groups = managers
+      .filter((grant) => grant.type === "group")
+      .map((grant) => grant.principal);
+    if (!userIds.length && !groups.length) {
+      return false;
+    }
+    const found = await db
+      .selectFrom("users")
+      .select("id")
+      .where("disabled_at", "is", null)
+      .where((eb) =>
+        eb.or([
+          ...(userIds.length ? [eb("id", "in", userIds)] : []),
+          ...(groups.length ? [sql<boolean>`groups && ${groups}::text[]`] : []),
+        ]),
+      )
+      .limit(1)
+      .executeTakeFirst();
+    return !!found;
+  };
+
+  /** live connections to these scenes re-check their rights */
+  const recheckLiveAccess = (sceneIds: string[]) => {
+    if (sceneIds.length) {
+      ctx.realtime.recheckScenes(sceneIds).catch((error) => {
+        app.log.warn({ err: error }, "re-checking live access failed");
+      });
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // workspace overview
   // ---------------------------------------------------------------------------
@@ -525,12 +581,12 @@ export const registerWorkspaceRoutes = (
       if (!grants || !(await validateUserGrants(grants))) {
         return sendError(reply, 400, "invalid_grants");
       }
-      if (!grants.some((grant) => grant.role === "manager")) {
+      if (!(await hasActiveManager(grants))) {
         return sendError(
           reply,
           400,
           "manager_required",
-          "Mindestens eine Person oder Gruppe muss die Collection verwalten.",
+          "Mindestens eine Person oder eine Gruppe mit Mitgliedern muss die Collection verwalten.",
         );
       }
       const userId = request.auth!.user.id;
@@ -552,6 +608,13 @@ export const registerWorkspaceRoutes = (
           )
           .execute();
       });
+      const scenes = await db
+        .selectFrom("scenes")
+        .select("id")
+        .where("collection_id", "=", loaded.collection.id)
+        .where("deleted_at", "is", null)
+        .execute();
+      recheckLiveAccess(scenes.map((scene) => scene.id));
       return { ok: true };
     },
   );
@@ -564,26 +627,34 @@ export const registerWorkspaceRoutes = (
     "/api/scenes",
     { preHandler: requireAuth },
     async (request, reply) => {
-      const query = request.query as Record<string, string | undefined>;
+      const query = request.query as Record<string, unknown>;
       const current = actor(request);
-      const search = (query.q || "").trim().slice(0, 100);
+      const search = searchText(query.q);
+      const sortParam = queryParam(query.sort);
       const sort =
-        query.sort === "name" || query.sort === "created"
-          ? query.sort
-          : "updated";
+        sortParam === "name" || sortParam === "created" ? sortParam : "updated";
+      // order in SQL before the limit, so large collections list the right ones
+      const orderColumn =
+        sort === "name"
+          ? "name"
+          : sort === "created"
+          ? "created_at"
+          : "updated_at";
+      const orderDirection = sort === "name" ? "asc" : "desc";
 
       let scenes: Scene[] = [];
       const access = new Map<string, { role: Role; canManage: boolean }>();
-      const mode = query.collection
+      const collectionId = queryParam(query.collection);
+      const mode = collectionId
         ? "collection"
-        : query.view === "shared"
+        : queryParam(query.view) === "shared"
         ? "shared"
         : "recent";
 
-      if (mode === "collection" && query.collection) {
+      if (mode === "collection" && collectionId) {
         const loaded = await loadCollection(
           current,
-          query.collection,
+          collectionId,
           reply,
           "viewer",
         );
@@ -596,9 +667,12 @@ export const registerWorkspaceRoutes = (
           .where("collection_id", "=", loaded.collection.id)
           .where("deleted_at", "is", null);
         if (search) {
-          builder = builder.where("name", "ilike", `%${search}%`);
+          builder = builder.where("name", "ilike", containsPattern(search));
         }
-        scenes = await builder.limit(500).execute();
+        scenes = await builder
+          .orderBy(orderColumn, orderDirection)
+          .limit(500)
+          .execute();
         // rights follow the collection role
         for (const scene of scenes) {
           access.set(scene.id, {
@@ -622,9 +696,12 @@ export const registerWorkspaceRoutes = (
             ),
           );
         if (search) {
-          builder = builder.where("name", "ilike", `%${search}%`);
+          builder = builder.where("name", "ilike", containsPattern(search));
         }
-        scenes = await builder.limit(500).execute();
+        scenes = await builder
+          .orderBy(orderColumn, orderDirection)
+          .limit(500)
+          .execute();
         for (const scene of scenes) {
           const result = await sceneAccess(db, current, scene.id);
           if (result) {
@@ -826,6 +903,12 @@ export const registerWorkspaceRoutes = (
         .set({ ...changes, updated_at: sql`now()` })
         .where("id", "=", access.scene.id)
         .execute();
+      if (
+        changes.collection_id &&
+        changes.collection_id !== access.scene.collection_id
+      ) {
+        recheckLiveAccess([access.scene.id]);
+      }
       return { ok: true };
     },
   );
@@ -893,11 +976,13 @@ export const registerWorkspaceRoutes = (
       if (
         !body ||
         typeof body.sceneVersion !== "number" ||
+        // bigint columns: reject what Postgres can't take (500 otherwise)
+        !isCounter(Math.trunc(body.sceneVersion)) ||
         typeof body.iv !== "string" ||
         typeof body.ciphertext !== "string" ||
         !isBase64(body.iv) ||
         !isBase64(body.ciphertext) ||
-        !(expected === null || typeof expected === "number")
+        !(expected === null || isCounter(expected))
       ) {
         return sendError(reply, 400, "invalid_body");
       }
@@ -1120,6 +1205,7 @@ export const registerWorkspaceRoutes = (
             .execute();
         }
       });
+      recheckLiveAccess([access.scene.id]);
       return { ok: true };
     },
   );
@@ -1148,6 +1234,10 @@ export const registerWorkspaceRoutes = (
         .set({ read_link_token: token })
         .where("id", "=", access.scene.id)
         .execute();
+      if (access.scene.read_link_token) {
+        // a new link locks out everyone who came through the old one
+        recheckLiveAccess([access.scene.id]);
+      }
       return { url: new URL(`/v/${token}`, config.publicUrl).toString() };
     },
   );
@@ -1179,6 +1269,7 @@ export const registerWorkspaceRoutes = (
           .where("scene_id", "=", access.scene.id)
           .execute();
       });
+      recheckLiveAccess([access.scene.id]);
       return reply.code(204).send();
     },
   );
@@ -1219,13 +1310,11 @@ export const registerWorkspaceRoutes = (
   // --- people and groups to share with ----------------------------------------
 
   app.get("/api/directory", { preHandler: requireAuth }, async (request) => {
-    const q = String((request.query as Record<string, unknown>).q || "")
-      .trim()
-      .slice(0, 100);
+    const q = searchText((request.query as Record<string, unknown>).q);
     if (q.length < 2) {
       return { users: [], groups: [] };
     }
-    const pattern = `%${q.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+    const pattern = containsPattern(q);
     const users = await db
       .selectFrom("users")
       .select(["id", "name", "email", "username"])

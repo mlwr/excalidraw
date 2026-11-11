@@ -177,6 +177,26 @@ describeWithDb("authentication", () => {
       payload: Buffer.from("payload"),
     });
     expect(response.statusCode).toBe(403);
+
+    // without any origin information the cookie alone is not enough
+    const post = (headers: Record<string, string>) =>
+      env.built.app.inject({
+        method: "POST",
+        url: "/api/v2/post/",
+        headers: {
+          cookie,
+          "content-type": "application/octet-stream",
+          ...headers,
+        },
+        payload: Buffer.from("payload"),
+      });
+    expect((await post({})).statusCode).toBe(403);
+    expect((await post({ "sec-fetch-site": "same-site" })).statusCode).toBe(
+      403,
+    );
+    expect((await post({ "sec-fetch-site": "same-origin" })).statusCode).toBe(
+      200,
+    );
   });
 });
 
