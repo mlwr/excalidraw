@@ -22,6 +22,12 @@ export interface BlobStore {
     data: Buffer,
     meta: { contentType: string | null; createdBy: string | null },
   ): Promise<boolean>;
+  /** write or replace (derived data such as thumbnails) */
+  put(
+    key: string,
+    data: Buffer,
+    meta: { contentType: string | null; createdBy: string | null },
+  ): Promise<void>;
   get(key: string): Promise<StoredBlob | null>;
   /** cheap reachability check for readiness probes */
   check(): Promise<void>;

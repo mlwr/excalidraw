@@ -8,6 +8,10 @@ import type { Kysely } from "kysely";
 export interface RealtimeHooks {
   /** disconnect all sockets that belong to the given (deleted) sessions */
   disconnectSessions: (sessionIds: string[]) => void;
+  /** who is connected to which workspace scene right now */
+  scenePresence: () => Promise<Map<string, { id: string; name: string }[]>>;
+  /** disconnect everybody from a scene (e.g. after it was deleted) */
+  closeSceneRoom: (sceneId: string) => void;
 }
 
 export interface AppContext {
@@ -31,6 +35,7 @@ export const clientConfig = (config: Config) => ({
   maxImageDimension: config.limits.maxImageDimension,
   ai: { enabled: false },
   libraries: { browseUrl: config.libraryBrowseUrl },
+  workspace: { enabled: true },
 });
 
 export type ClientConfig = ReturnType<typeof clientConfig>;

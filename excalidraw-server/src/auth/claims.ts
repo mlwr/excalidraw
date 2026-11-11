@@ -39,6 +39,27 @@ const str = (value: unknown): string | null =>
   typeof value === "string" && value.trim() ? value.trim() : null;
 
 /**
+ * Keycloak lists only direct memberships ("/IT/Architektur"). Members of a
+ * subgroup also belong to its parents (Keycloak inherits role mappings the
+ * same way), so a grant to "/IT" covers "/IT/Architektur" too. Names without
+ * a leading slash ("Full group path" off) have no hierarchy and stay as-is.
+ */
+export const withParentGroups = (groups: Iterable<string>): string[] => {
+  const result = new Set<string>();
+  for (const group of groups) {
+    if (!group.startsWith("/")) {
+      result.add(group);
+      continue;
+    }
+    const segments = group.split("/").slice(1);
+    for (let depth = 1; depth <= segments.length; depth++) {
+      result.add(`/${segments.slice(0, depth).join("/")}`);
+    }
+  }
+  return [...result].sort();
+};
+
+/**
  * Decode the payload of a JWT without verifying it. Only used for the access
  * token we just received directly from the token endpoint (authenticated
  * TLS channel), because Keycloak puts roles there and not into the ID token.
@@ -103,7 +124,7 @@ export const mapIdentity = (
     email,
     username,
     roles: [...roles].sort(),
-    groups: [...groups].sort(),
+    groups: withParentGroups(groups),
     isAdmin: roles.has(oidc.adminRole),
     sid: str(merged.sid),
   };

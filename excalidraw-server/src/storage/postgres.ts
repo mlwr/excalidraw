@@ -30,6 +30,31 @@ export class PostgresBlobStore implements BlobStore {
     return Number(result.numInsertedOrUpdatedRows ?? 0) > 0;
   }
 
+  async put(
+    key: string,
+    data: Buffer,
+    meta: { contentType: string | null; createdBy: string | null },
+  ): Promise<void> {
+    await this.db
+      .insertInto("blobs")
+      .values({
+        key,
+        data,
+        size: data.byteLength,
+        content_type: meta.contentType,
+        created_by: meta.createdBy,
+      })
+      .onConflict((oc) =>
+        oc.column("key").doUpdateSet({
+          data,
+          size: data.byteLength,
+          content_type: meta.contentType,
+          created_at: sql`now()`,
+        }),
+      )
+      .execute();
+  }
+
   async get(key: string): Promise<StoredBlob | null> {
     const row = await this.db
       .selectFrom("blobs")

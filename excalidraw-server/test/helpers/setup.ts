@@ -12,6 +12,9 @@ import type { FakeOidc, FakeUser } from "./fakeOidc.js";
 export const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL || "";
 
 export const PUBLIC_URL = "http://localhost:3999";
+
+/** fixed test master key (32 bytes) */
+export const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 export const ORIGIN = PUBLIC_URL;
 
 /** run the database tests only where a throwaway database is configured */
@@ -62,6 +65,7 @@ export const createTestEnv = async (
     OIDC_CLIENT_ID: oidc.clientId,
     OIDC_CLIENT_SECRET: oidc.clientSecret,
     OIDC_ALLOW_INSECURE_HTTP: "true",
+    DATA_ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
     LOG_LEVEL: "warn",
     ...env,
   });
@@ -115,7 +119,8 @@ export const alice: FakeUser = {
   email: "alice@example.test",
   preferred_username: "alice",
   clientRoles: ["excalidraw-admin"],
-  groups: ["/IT", "/IT/Architektur"],
+  // Keycloak lists direct memberships only; "/IT" is added by the server
+  groups: ["/IT/Architektur"],
 };
 
 export const bob: FakeUser = {

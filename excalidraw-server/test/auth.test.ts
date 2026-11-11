@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
+import { withParentGroups } from "../src/auth/claims.js";
+
 import {
   alice,
   bob,
@@ -10,6 +12,21 @@ import {
 } from "./helpers/setup.js";
 
 import type { TestEnv } from "./helpers/setup.js";
+
+describe("withParentGroups", () => {
+  it("adds the parents of Keycloak group paths", () => {
+    expect(
+      withParentGroups(["/IT/Architektur/Cloud", "/Vertrieb", "/IT"]),
+    ).toEqual(["/IT", "/IT/Architektur", "/IT/Architektur/Cloud", "/Vertrieb"]);
+  });
+
+  it("keeps plain group names", () => {
+    expect(withParentGroups(["Architektur", "IT"])).toEqual([
+      "Architektur",
+      "IT",
+    ]);
+  });
+});
 
 describeWithDb("authentication", () => {
   let env: TestEnv;
@@ -179,7 +196,21 @@ describe("configuration", () => {
         DATABASE_URL: "postgres://x",
         OIDC_ISSUER_URL: "https://sso.example/realms/x",
         OIDC_CLIENT_ID: "excalidraw",
+        DATA_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
       }),
     ).toThrow(/PUBLIC_URL must use https/);
+  });
+
+  it("requires a 32-byte data encryption key", async () => {
+    const { loadConfig } = await import("../src/config.js");
+    expect(() =>
+      loadConfig({
+        PUBLIC_URL: "https://excalidraw.intranet.example",
+        DATABASE_URL: "postgres://x",
+        OIDC_ISSUER_URL: "https://sso.example/realms/x",
+        OIDC_CLIENT_ID: "excalidraw",
+        DATA_ENCRYPTION_KEY: "dG9vIHNob3J0",
+      }),
+    ).toThrow(/DATA_ENCRYPTION_KEY must be 32 random bytes/);
   });
 });

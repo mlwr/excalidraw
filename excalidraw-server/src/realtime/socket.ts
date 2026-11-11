@@ -10,6 +10,16 @@ import type { Socket } from "socket.io";
 
 const ROOM_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 const FOLLOW_ROOM_PREFIX = "follow@";
+/** rooms of workspace scenes: "scene-<sceneId>" (access-controlled) */
+export const SCENE_ROOM_PREFIX = "scene-";
+
+export type SceneRoomRole = "none" | "viewer" | "editor";
+
+/** decides who may join the live room of a workspace scene */
+export type SceneRoomAuthorizer = (
+  userId: string,
+  sceneId: string,
+) => Promise<SceneRoomRole>;
 
 interface UserFollowPayload {
   userToFollow?: { socketId?: unknown };
@@ -30,6 +40,7 @@ export const attachRealtime = (
   config: Config,
   sessions: SessionStore,
   pool: pg.Pool,
+  authorizeSceneRoom: SceneRoomAuthorizer,
 ): { io: Server; hooks: RealtimeHooks } => {
   const origin = config.publicUrl.origin;
 
@@ -55,7 +66,10 @@ export const attachRealtime = (
         return next(new Error("unauthorized"));
       }
       socket.data.userId = auth.user.id;
+      socket.data.userName = auth.user.name;
       socket.data.sessionId = auth.session.id;
+      // scene rooms this socket may only watch (viewers)
+      socket.data.readOnlyRooms = [] as string[];
       next();
     } catch (error) {
       app.log.error({ err: error }, "socket authentication failed");
@@ -72,6 +86,22 @@ export const attachRealtime = (
     socket.on("join-room", async (roomId: unknown) => {
       if (!isValidRoomId(roomId)) {
         return;
+      }
+      if (roomId.startsWith(SCENE_ROOM_PREFIX)) {
+        const role = await authorizeSceneRoom(
+          socket.data.userId,
+          roomId.slice(SCENE_ROOM_PREFIX.length),
+        ).catch((error) => {
+          app.log.error({ err: error }, "scene room authorization failed");
+          return "none" as const;
+        });
+        if (role === "none") {
+          io.to(socket.id).emit("room-access-denied", roomId);
+          return;
+        }
+        if (role === "viewer") {
+          socket.data.readOnlyRooms.push(roomId);
+        }
       }
       await socket.join(roomId);
       const sockets = await io.in(roomId).fetchSockets();
@@ -91,6 +121,10 @@ export const attachRealtime = (
       (roomId: unknown, encryptedData: unknown, iv: unknown) => {
         // only relay into rooms this socket actually joined
         if (!isValidRoomId(roomId) || !socket.rooms.has(roomId)) {
+          return;
+        }
+        // viewers may show their cursor (volatile), not change the scene
+        if (!volatile && socket.data.readOnlyRooms.includes(roomId)) {
           return;
         }
         const target = volatile
@@ -154,6 +188,26 @@ export const attachRealtime = (
       if (sessionIds.length) {
         io.in(sessionIds.map((id) => `session:${id}`)).disconnectSockets(true);
       }
+    },
+    scenePresence: async () => {
+      const presence = new Map<string, { id: string; name: string }[]>();
+      for (const socket of await io.fetchSockets()) {
+        for (const room of socket.rooms) {
+          if (!room.startsWith(SCENE_ROOM_PREFIX)) {
+            continue;
+          }
+          const sceneId = room.slice(SCENE_ROOM_PREFIX.length);
+          const users = presence.get(sceneId) || [];
+          if (!users.some((user) => user.id === socket.data.userId)) {
+            users.push({ id: socket.data.userId, name: socket.data.userName });
+          }
+          presence.set(sceneId, users);
+        }
+      }
+      return presence;
+    },
+    closeSceneRoom: (sceneId) => {
+      io.in(`${SCENE_ROOM_PREFIX}${sceneId}`).disconnectSockets(true);
     },
   };
 

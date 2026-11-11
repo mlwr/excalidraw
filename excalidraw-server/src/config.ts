@@ -78,6 +78,8 @@ export interface Config {
   cspFrameAncestors: string[];
   /** URL of an internal library catalog; null hides "browse libraries" */
   libraryBrowseUrl: string | null;
+  /** 32-byte master key that encrypts the per-scene keys */
+  dataEncryptionKey: Buffer;
   logLevel: string;
 }
 
@@ -136,6 +138,20 @@ const splitList = (value: string | undefined): string[] =>
 
 const trustHops = (hops: number) => (_address: string, hop: number) =>
   hop < hops;
+
+const parseEncryptionKey = (
+  value: string | undefined,
+  errors: string[],
+): Buffer => {
+  const key = Buffer.from((value || "").trim(), "base64");
+  if (key.length !== 32) {
+    errors.push(
+      "DATA_ENCRYPTION_KEY must be 32 random bytes, base64 encoded (e.g. `openssl rand -base64 32`)",
+    );
+    return Buffer.alloc(32);
+  }
+  return key;
+};
 
 const parseTrustProxy = (
   value: string | undefined,
@@ -290,6 +306,7 @@ export const loadConfig = (env: Env = process.env): Config => {
     cspFrameSrc: splitList(env.CSP_FRAME_SRC),
     cspFrameAncestors: splitList(env.CSP_FRAME_ANCESTORS),
     libraryBrowseUrl: env.LIBRARY_BROWSE_URL?.trim() || null,
+    dataEncryptionKey: parseEncryptionKey(env.DATA_ENCRYPTION_KEY, errors),
     logLevel: env.LOG_LEVEL || "info",
   };
 

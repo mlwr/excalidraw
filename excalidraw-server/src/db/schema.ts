@@ -86,6 +86,87 @@ export interface BlobsTable {
   created_at: Timestamp;
 }
 
+export type GrantRole = "viewer" | "editor" | "manager";
+export type PrincipalType = "user" | "group";
+
+export interface CollectionsTable {
+  id: Generated<string>;
+  workspace_id: string;
+  name: string;
+  kind: "personal" | "team";
+  owner_id: string | null;
+  created_by: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  deleted_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+}
+
+export interface CollectionGrantsTable {
+  collection_id: string;
+  principal_type: PrincipalType;
+  principal: string;
+  role: GrantRole;
+  created_by: string | null;
+  created_at: Timestamp;
+}
+
+export interface ScenesTable {
+  id: string;
+  workspace_id: string;
+  collection_id: string;
+  name: string;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  deleted_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+  revision: ColumnType<string, number | string | undefined, number | string>;
+  scene_version: ColumnType<
+    string,
+    number | string | undefined,
+    number | string
+  >;
+  iv: Buffer | null;
+  ciphertext: Buffer | null;
+  key_sealed: Buffer;
+  thumbnail_updated_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+  read_link_token: string | null;
+}
+
+export interface SceneGrantsTable {
+  scene_id: string;
+  principal_type: PrincipalType;
+  principal: string;
+  role: Exclude<GrantRole, "manager">;
+  created_by: string | null;
+  created_at: Timestamp;
+}
+
+export interface SceneVisitsTable {
+  user_id: string;
+  scene_id: string;
+  visited_at: Timestamp;
+}
+
+export interface SceneLinkViewersTable {
+  scene_id: string;
+  user_id: string;
+  token: string;
+  created_at: Timestamp;
+}
+
 export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
@@ -94,8 +175,16 @@ export interface Database {
   rooms: RoomsTable;
   share_links: ShareLinksTable;
   blobs: BlobsTable;
+  collections: CollectionsTable;
+  collection_grants: CollectionGrantsTable;
+  scenes: ScenesTable;
+  scene_grants: SceneGrantsTable;
+  scene_visits: SceneVisitsTable;
+  scene_link_viewers: SceneLinkViewersTable;
 }
 
 export type User = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;
 export type Session = Selectable<SessionsTable>;
+export type Collection = Selectable<CollectionsTable>;
+export type Scene = Selectable<ScenesTable>;

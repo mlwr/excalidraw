@@ -11,6 +11,8 @@ import { attachRealtime } from "./realtime/socket.js";
 import { registerDataRoutes } from "./routes/data.js";
 import { registerStatic } from "./routes/static.js";
 import { createBlobStore } from "./storage/index.js";
+import { actorOf, sceneAccess } from "./workspace/access.js";
+import { registerWorkspaceRoutes } from "./workspace/routes.js";
 
 import type { Config } from "./config.js";
 import type { AppContext, RealtimeHooks } from "./context.js";
@@ -61,7 +63,11 @@ export const buildApp = async (
   }
 
   // realtime is attached after the routes; until then the hooks are no-ops
-  const realtimeHooks: RealtimeHooks = { disconnectSessions: () => {} };
+  const realtimeHooks: RealtimeHooks = {
+    disconnectSessions: () => {},
+    scenePresence: async () => new Map(),
+    closeSceneRoom: () => {},
+  };
 
   const ctx: AppContext = {
     config,
@@ -71,6 +77,8 @@ export const buildApp = async (
     blobs: createBlobStore(config, dbHandle.db),
     realtime: {
       disconnectSessions: (ids) => realtimeHooks.disconnectSessions(ids),
+      scenePresence: () => realtimeHooks.scenePresence(),
+      closeSceneRoom: (id) => realtimeHooks.closeSceneRoom(id),
     },
   };
 
@@ -118,6 +126,7 @@ export const buildApp = async (
 
   const { requireAuth } = registerAuth(app, ctx);
   registerDataRoutes(app, ctx, requireAuth);
+  registerWorkspaceRoutes(app, ctx, requireAuth);
   await registerStatic(app, config);
 
   const { io, hooks } = attachRealtime(
@@ -125,8 +134,22 @@ export const buildApp = async (
     config,
     ctx.sessions,
     dbHandle.pool,
+    async (userId, sceneId) => {
+      const user = await ctx.db
+        .selectFrom("users")
+        .selectAll()
+        .where("id", "=", userId)
+        .executeTakeFirst();
+      const access = user
+        ? await sceneAccess(ctx.db, actorOf(user), sceneId)
+        : null;
+      if (!access || access.role === "none") {
+        return "none";
+      }
+      return access.role === "viewer" ? "viewer" : "editor";
+    },
   );
-  realtimeHooks.disconnectSessions = hooks.disconnectSessions;
+  Object.assign(realtimeHooks, hooks);
 
   // housekeeping: expired sessions and abandoned logins
   const cleanupTimer = setInterval(() => {

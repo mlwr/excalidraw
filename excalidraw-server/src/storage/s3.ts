@@ -37,6 +37,27 @@ export class S3BlobStore implements BlobStore {
     return `${endpoint.protocol}//${this.s3.bucket}.${endpoint.host}`;
   }
 
+  async put(
+    key: string,
+    data: Buffer,
+    meta: { contentType: string | null; createdBy: string | null },
+  ): Promise<void> {
+    const headers: Record<string, string> = {
+      "content-type": meta.contentType || "application/octet-stream",
+    };
+    if (meta.createdBy) {
+      headers["x-amz-meta-created-by"] = meta.createdBy;
+    }
+    const response = await this.client.fetch(this.objectUrl(key), {
+      method: "PUT",
+      headers,
+      body: new Uint8Array(data),
+    });
+    if (!response.ok) {
+      throw new Error(`S3 PUT ${key} failed with status ${response.status}`);
+    }
+  }
+
   async putIfAbsent(
     key: string,
     data: Buffer,
