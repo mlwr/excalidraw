@@ -24,17 +24,13 @@ import {
   atLeast,
   collectionRole,
   grantMatches,
+  SCENE_META_COLUMNS,
   sceneAccess,
 } from "./access.js";
 
 import type { AppContext } from "../context.js";
-import type {
-  Collection,
-  GrantRole,
-  PrincipalType,
-  Scene,
-} from "../db/schema.js";
-import type { Actor, Role } from "./access.js";
+import type { Collection, GrantRole, PrincipalType } from "../db/schema.js";
+import type { Actor, Role, SceneMeta } from "./access.js";
 import type {
   FastifyInstance,
   FastifyReply,
@@ -189,7 +185,7 @@ export const registerWorkspaceRoutes = (
   };
 
   const sceneSummaries = async (
-    scenes: Scene[],
+    scenes: SceneMeta[],
     collections: Map<string, Collection>,
     options: {
       withPresence?: boolean;
@@ -642,7 +638,7 @@ export const registerWorkspaceRoutes = (
           : "updated_at";
       const orderDirection = sort === "name" ? "asc" : "desc";
 
-      let scenes: Scene[] = [];
+      let scenes: SceneMeta[] = [];
       const access = new Map<string, { role: Role; canManage: boolean }>();
       const collectionId = queryParam(query.collection);
       const mode = collectionId
@@ -663,7 +659,7 @@ export const registerWorkspaceRoutes = (
         }
         let builder = db
           .selectFrom("scenes")
-          .selectAll()
+          .select(SCENE_META_COLUMNS)
           .where("collection_id", "=", loaded.collection.id)
           .where("deleted_at", "is", null);
         if (search) {
@@ -684,7 +680,7 @@ export const registerWorkspaceRoutes = (
         // scenes shared with me directly (not through a collection)
         let builder = db
           .selectFrom("scenes")
-          .selectAll()
+          .select(SCENE_META_COLUMNS)
           .where("deleted_at", "is", null)
           .where((eb) =>
             eb.exists(
@@ -716,13 +712,15 @@ export const registerWorkspaceRoutes = (
         const visited = await db
           .selectFrom("scene_visits")
           .innerJoin("scenes", "scenes.id", "scene_visits.scene_id")
-          .selectAll("scenes")
+          .select(
+            SCENE_META_COLUMNS.map((column) => `scenes.${column}` as const),
+          )
           .where("scene_visits.user_id", "=", current.id)
           .where("scenes.deleted_at", "is", null)
           .orderBy("scene_visits.visited_at", "desc")
           .limit(30)
           .execute();
-        const allowed: Scene[] = [];
+        const allowed: SceneMeta[] = [];
         for (const scene of visited) {
           const result = await sceneAccess(db, current, scene.id);
           if (result && result.role !== "none") {
@@ -950,7 +948,11 @@ export const registerWorkspaceRoutes = (
         return;
       }
       reply.header("cache-control", "no-store");
-      const { scene } = access;
+      const scene = await db
+        .selectFrom("scenes")
+        .select(["iv", "ciphertext", "revision", "scene_version"])
+        .where("id", "=", access.scene.id)
+        .executeTakeFirstOrThrow();
       if (Number(scene.revision) === 0 || !scene.iv || !scene.ciphertext) {
         return sendError(reply, 404, "no_content");
       }

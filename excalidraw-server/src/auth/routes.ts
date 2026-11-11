@@ -221,11 +221,37 @@ export const registerAuth = (app: FastifyInstance, ctx: AppContext) => {
         result.userinfo || {},
       ]);
 
+      const issuer =
+        typeof result.idTokenClaims.iss === "string"
+          ? result.idTokenClaims.iss
+          : oidc.issuer;
+
       if (!hasAccess(config.oidc, identity)) {
         request.log.info(
           { subject: identity.subject },
           "login denied: required role missing",
         );
+        // Keycloak took the access away: store what it says now and end the
+        // person's API tokens as well
+        const known = await db
+          .updateTable("users")
+          .set({
+            roles: identity.roles,
+            groups: identity.groups,
+            is_admin: identity.isAdmin,
+          })
+          .where("oidc_issuer", "=", issuer)
+          .where("oidc_subject", "=", identity.subject)
+          .returning("id")
+          .executeTakeFirst();
+        if (known) {
+          await db
+            .updateTable("api_tokens")
+            .set({ revoked_at: sql`now()` })
+            .where("user_id", "=", known.id)
+            .where("revoked_at", "is", null)
+            .execute();
+        }
         return sendHtmlError(
           reply,
           403,
@@ -233,11 +259,6 @@ export const registerAuth = (app: FastifyInstance, ctx: AppContext) => {
           `Dein Konto ist angemeldet, hat aber nicht die Keycloak-Rolle „${config.oidc.requiredRole}“, die für Excalidraw nötig ist. Bitte wende dich an die Administration.`,
         );
       }
-
-      const issuer =
-        typeof result.idTokenClaims.iss === "string"
-          ? result.idTokenClaims.iss
-          : oidc.issuer;
 
       const user = await db
         .insertInto("users")

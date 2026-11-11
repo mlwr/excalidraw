@@ -6,7 +6,7 @@
  */
 import { sql } from "kysely";
 
-import { generateToken, mayUseApi } from "../auth/tokens.js";
+import { bearerToken, generateToken, mayUseApi } from "../auth/tokens.js";
 import { sha256 } from "../util/crypto.js";
 import { HttpError, sendError } from "../util/http.js";
 import { queryParam, searchText } from "../util/validate.js";
@@ -49,10 +49,12 @@ export const apiRateLimit = (ctx: AppContext) => ({
   rateLimit: {
     max: ctx.config.api.rateLimitPerMinute,
     timeWindow: "1 minute",
-    keyGenerator: (request: FastifyRequest) =>
-      request.headers.authorization
-        ? sha256(request.headers.authorization)
-        : request.ip,
+    // the token itself, however the header is spelled; without a
+    // well-formed token the address (the global limit applies as well)
+    keyGenerator: (request: FastifyRequest) => {
+      const token = bearerToken(request.headers.authorization);
+      return token ? sha256(token) : request.ip;
+    },
   },
 });
 
@@ -96,6 +98,7 @@ export const registerTokenRoutes = (
     return {
       allowed: mayUseApi(config, user),
       maxDays: config.api.tokenMaxDays,
+      loginMaxAgeDays: config.api.loginMaxAgeDays,
       mcpEnabled: config.api.mcpEnabled,
       tokens: rows.map(describe),
     };
@@ -404,6 +407,8 @@ export const registerApiRoutes = (
         "Entweder elements (Skelette) oder content (.excalidraw), nicht beides.",
       );
     }
+    // check everything that can be checked before the scene exists
+    workspace.validateFiles(content?.files);
     const current = actor(request);
     const { scene } = await workspace.createScene(current, {
       name,
@@ -411,14 +416,20 @@ export const registerApiRoutes = (
         typeof input.collectionId === "string" ? input.collectionId : null,
     });
     let created: unknown[] = [];
-    if (skeletons) {
-      created = (await operations.addElements(current, scene.id, skeletons))
-        .created;
-    } else if (imported?.length) {
-      await operations.replace(current, scene.id, {
-        elements: imported,
-        files: content!.files,
-      });
+    try {
+      if (skeletons) {
+        created = (await operations.addElements(current, scene.id, skeletons))
+          .created;
+      } else if (imported?.length) {
+        await operations.replace(current, scene.id, {
+          elements: imported,
+          files: content!.files,
+        });
+      }
+    } catch (error) {
+      // no half-made scenes
+      await workspace.discardScene(scene.id);
+      throw error;
     }
     return reply.code(201).send({
       scene: await workspace.describeAccess(
@@ -473,11 +484,15 @@ export const registerApiRoutes = (
         request.params.sceneId,
         "viewer",
       );
-      const { key, elements, revision } = workspace.readContent(access);
+      const { key, elements, revision } = await workspace.readContent(access);
       const live = elements.filter((element) => !element.isDeleted);
       const withFiles = queryParam(
         (request.query as Record<string, unknown>).files,
       );
+      const { files, omitted } =
+        withFiles === "false"
+          ? { files: {}, omitted: [] as string[] }
+          : await workspace.readFiles(access.scene.id, key, live);
       reply.header("cache-control", "no-store");
       return {
         type: "excalidraw",
@@ -485,10 +500,9 @@ export const registerApiRoutes = (
         source: config.publicUrl.origin,
         elements: live,
         appState: { viewBackgroundColor: "#ffffff", gridSize: null },
-        files:
-          withFiles === "false"
-            ? {}
-            : await workspace.readFiles(access.scene.id, key, live),
+        files,
+        // images beyond the size limit of one response
+        ...(omitted.length ? { filesOmitted: omitted } : {}),
         revision,
       };
     },

@@ -243,6 +243,7 @@ export const workspaceApi = {
     json<{
       allowed: boolean;
       maxDays: number;
+      loginMaxAgeDays: number;
       mcpEnabled: boolean;
       tokens: ApiTokenInfo[];
     }>(await backendFetch("/api/tokens")),

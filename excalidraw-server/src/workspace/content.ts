@@ -43,7 +43,14 @@ export const decryptFromBrowser = (key: string, iv: Buffer, data: Buffer) => {
 
 /** like the editor's getSceneVersion: changes whenever any element changes */
 export const sceneVersionOf = (elements: readonly SceneElement[]) =>
-  elements.reduce((sum, element) => sum + (element.version || 0), 0);
+  Math.min(
+    Number.MAX_SAFE_INTEGER,
+    elements.reduce(
+      (sum, element) =>
+        sum + Math.max(0, Math.trunc(Number(element.version) || 0)),
+      0,
+    ),
+  );
 
 export const decryptElements = (
   key: string,
@@ -109,14 +116,15 @@ export interface FileMetadata {
 }
 
 /** an image file as the editor stores it: metadata and data URL */
-export const decodeFile = (key: string, stored: Buffer) => {
+export const decodeFile = (key: string, stored: Buffer, maxBytes: number) => {
   const [encoding, iv, encrypted] = splitBuffers(stored);
   const info = JSON.parse(encoding.toString("utf8")) as {
     compression?: string | null;
   };
   const decrypted = decryptFromBrowser(key, iv, encrypted);
+  // never inflate beyond what an image may be (no decompression bombs)
   const contents: Buffer = info.compression
-    ? inflateSync(decrypted)
+    ? inflateSync(decrypted, { maxOutputLength: maxBytes })
     : decrypted;
   const [metadata, data] = splitBuffers(contents);
   return {

@@ -74,6 +74,88 @@ export const SKELETON_TYPES = [
   "frame",
 ] as const;
 
+/**
+ * Limits that keep the server's text layout cheap: wrapping one long line
+ * costs time quadratic in its length, so texts are short and requests carry
+ * a bounded amount of text.
+ */
+export const MAX_TEXT_LENGTH = 2000;
+const MAX_REQUEST_TEXT = 50_000;
+const MAX_COORDINATE = 10_000_000;
+const MAX_SIZE = 100_000;
+const MAX_POINTS = 1000;
+
+/** text budget of one request */
+const textBudget = () => {
+  let used = 0;
+  return (text: unknown, where: string) => {
+    if (text === undefined) {
+      return;
+    }
+    if (typeof text !== "string" || text.length > MAX_TEXT_LENGTH) {
+      throw bad(
+        "text_too_long",
+        `${where}: Text mit höchstens ${MAX_TEXT_LENGTH} Zeichen erwartet.`,
+      );
+    }
+    used += text.length;
+    if (used > MAX_REQUEST_TEXT) {
+      throw bad(
+        "text_too_long",
+        `Höchstens ${MAX_REQUEST_TEXT} Zeichen Text pro Anfrage.`,
+      );
+    }
+  };
+};
+
+const checkGeometry = (item: Record<string, unknown>, where: string) => {
+  for (const key of ["x", "y"]) {
+    const value = item[key];
+    if (
+      value !== undefined &&
+      (typeof value !== "number" || Math.abs(value) > MAX_COORDINATE)
+    ) {
+      throw bad("invalid_elements", `${where}: ${key} liegt außerhalb.`);
+    }
+  }
+  for (const key of ["width", "height"]) {
+    const value = item[key];
+    if (
+      value !== undefined &&
+      (typeof value !== "number" || Math.abs(value) > MAX_SIZE)
+    ) {
+      throw bad("invalid_elements", `${where}: ${key} ist zu groß.`);
+    }
+  }
+  const fontSize = item.fontSize;
+  if (
+    fontSize !== undefined &&
+    (typeof fontSize !== "number" || fontSize < 4 || fontSize > 400)
+  ) {
+    throw bad(
+      "invalid_elements",
+      `${where}: fontSize liegt zwischen 4 und 400.`,
+    );
+  }
+  const points = item.points;
+  if (
+    points !== undefined &&
+    (!Array.isArray(points) ||
+      points.length > MAX_POINTS ||
+      points.some(
+        (point) =>
+          !Array.isArray(point) ||
+          point.length !== 2 ||
+          point.some(
+            (value) =>
+              typeof value !== "number" || Math.abs(value) > MAX_COORDINATE,
+          ),
+      ))
+  ) {
+    throw bad("invalid_elements", `${where}: points ungültig.`);
+  }
+};
+
 const NEEDS_POSITION = new Set([
   "rectangle",
   "ellipse",
@@ -90,6 +172,7 @@ export const skeletonList = (value: unknown): Skeleton[] => {
       `elements: eine Liste mit 1 bis ${MAX_ELEMENTS} Elementen.`,
     );
   }
+  const text = textBudget();
   value.forEach((item, index) => {
     const where = `elements[${index}]`;
     if (!item || typeof item !== "object" || Array.isArray(item)) {
@@ -97,6 +180,16 @@ export const skeletonList = (value: unknown): Skeleton[] => {
     }
     if (!isSaneJson(item)) {
       throw bad("invalid_elements", `${where}: ungültige Werte.`);
+    }
+    checkGeometry(item as Record<string, unknown>, where);
+    text((item as { text?: unknown }).text, where);
+    const label = (item as { label?: unknown }).label;
+    if (label !== undefined) {
+      if (!label || typeof label !== "object") {
+        throw bad("invalid_elements", `${where}: label ungültig.`);
+      }
+      text((label as { text?: unknown }).text, `${where}.label`);
+      checkGeometry(label as Record<string, unknown>, `${where}.label`);
     }
     const type = (item as { type?: unknown }).type;
     if (!SKELETON_TYPES.includes(type as typeof SKELETON_TYPES[number])) {
@@ -173,6 +266,8 @@ export const updateList = (value: unknown): ElementUpdate[] => {
   if (!Array.isArray(value) || !value.length || value.length > MAX_ELEMENTS) {
     throw bad("invalid_updates", "updates: eine nicht leere Liste erwartet.");
   }
+  const text = textBudget();
+  const seen = new Set<unknown>();
   return value.map((item, index) => {
     const where = `updates[${index}]`;
     if (!item || typeof item !== "object" || !isSaneJson(item)) {
@@ -182,6 +277,15 @@ export const updateList = (value: unknown): ElementUpdate[] => {
     if (typeof update.id !== "string") {
       throw bad("invalid_updates", `${where}: id fehlt.`);
     }
+    if (seen.has(update.id)) {
+      throw bad(
+        "invalid_updates",
+        `${where}: id ${update.id} kommt doppelt vor.`,
+      );
+    }
+    seen.add(update.id);
+    checkGeometry(update, where);
+    text(update.text, where);
     const result: Record<string, unknown> = { id: update.id };
     for (const key of ["x", "y", "width", "height"]) {
       if (update[key] !== undefined) {
@@ -201,9 +305,6 @@ export const updateList = (value: unknown): ElementUpdate[] => {
       }
     }
     if (update.text !== undefined) {
-      if (typeof update.text !== "string" || update.text.length > 10_000) {
-        throw bad("invalid_updates", `${where}: text ungültig.`);
-      }
       result.text = update.text;
     }
     for (const key of ["strokeColor", "backgroundColor"]) {
@@ -293,6 +394,7 @@ export const diagramSpec = (value: unknown): DiagramSpec => {
   }
   const ids = new Set<string>();
   const shapes = ["rectangle", "ellipse", "diamond"];
+  const text = textBudget();
   nodes.forEach((node: any, index) => {
     if (
       !node ||
@@ -302,9 +404,13 @@ export const diagramSpec = (value: unknown): DiagramSpec => {
     ) {
       throw bad("invalid_diagram", `nodes[${index}]: eindeutige id erwartet.`);
     }
-    if (typeof node.label !== "string" || node.label.length > 2000) {
-      throw bad("invalid_diagram", `nodes[${index}]: label erwartet.`);
+    if (typeof node.label !== "string" || node.label.length > 500) {
+      throw bad(
+        "invalid_diagram",
+        `nodes[${index}]: label mit höchstens 500 Zeichen erwartet.`,
+      );
     }
+    text(node.label, `nodes[${index}]`);
     if (node.shape !== undefined && !shapes.includes(node.shape)) {
       throw bad(
         "invalid_diagram",
@@ -330,10 +436,14 @@ export const diagramSpec = (value: unknown): DiagramSpec => {
     }
     if (
       edge.label !== undefined &&
-      (typeof edge.label !== "string" || edge.label.length > 500)
+      (typeof edge.label !== "string" || edge.label.length > 200)
     ) {
-      throw bad("invalid_diagram", `edges[${index}]: label ungültig.`);
+      throw bad(
+        "invalid_diagram",
+        `edges[${index}]: label mit höchstens 200 Zeichen erwartet.`,
+      );
     }
+    text(edge.label, `edges[${index}]`);
     if (
       edge.strokeStyle !== undefined &&
       !STYLE_ENUMS.strokeStyle.includes(edge.strokeStyle)

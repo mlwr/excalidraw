@@ -70,6 +70,6 @@ Der Dialog **API-Tokens** im Dashboard zeigt unter „So wird ein Token benutzt�
 ## Sicherheit
 
 - Der MCP-Server prüft jede Aktion mit denselben Rechten wie die App; ein Token sieht nie mehr als seine Person.
-- Tokens lassen sich im Dashboard jederzeit widerrufen und laufen spätestens nach `API_TOKEN_MAX_DAYS` ab.
+- Tokens lassen sich im Dashboard jederzeit widerrufen und laufen spätestens nach `API_TOKEN_MAX_DAYS` ab. Sie wirken nur, solange sich ihre Person regelmäßig anmeldet (`API_TOKEN_LOGIN_MAX_AGE_DAYS`), und enden, wenn Keycloak ihr den Zugang entzieht.
 - Mit `API_REQUIRED_ROLE` dürfen nur Personen mit einer bestimmten Keycloak-Rolle Tokens anlegen und benutzen; mit `MCP_ENABLED=false` ist der MCP-Server aus, die REST-API bleibt.
 - Inhalte gehen nur an den Client, der das Token benutzt. Wohin dieser sie weitergibt (z. B. an ein Sprachmodell), entscheidet seine Konfiguration – im Intranet an das interne Modell.

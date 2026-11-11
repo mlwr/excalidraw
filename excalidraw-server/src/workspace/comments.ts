@@ -17,7 +17,7 @@ import {
 } from "../util/crypto.js";
 import { HttpError } from "../util/http.js";
 
-import { atLeast } from "./access.js";
+import { actorOf, atLeast, sceneAccess } from "./access.js";
 import { notFound } from "./service.js";
 
 import type { AppContext } from "../context.js";
@@ -79,7 +79,8 @@ export const createCommentService = (
   const keyOf = (access: SceneAccess) =>
     openSceneKey(config.dataEncryptionKey, access.scene.key_sealed);
 
-  const mentionsOf = async (value: unknown) => {
+  /** mentioned people: only those who can see the scene */
+  const mentionsOf = async (value: unknown, sceneId: string) => {
     if (value === undefined || value === null) {
       return [];
     }
@@ -96,10 +97,23 @@ export const createCommentService = (
     }
     const found = await db
       .selectFrom("users")
-      .select("id")
+      .selectAll()
       .where("id", "in", ids)
+      .where("disabled_at", "is", null)
       .execute();
-    return found.map((row) => row.id);
+    const mentioned: string[] = [];
+    for (const user of found) {
+      const access = await sceneAccess(db, actorOf(user), sceneId);
+      if (!access || access.role === "none") {
+        throw new HttpError(
+          400,
+          "mention_without_access",
+          `${user.name} hat keinen Zugriff auf diese Szene.`,
+        );
+      }
+      mentioned.push(user.id);
+    }
+    return mentioned;
   };
 
   const threadFor = async (actor: Actor, threadId: string) => {
@@ -275,7 +289,7 @@ export const createCommentService = (
         : (() => {
             throw new HttpError(400, "invalid_element", "Ungültige elementId.");
           })();
-    const mentions = await mentionsOf(input.mentions);
+    const mentions = await mentionsOf(input.mentions, access.scene.id);
     const key = keyOf(access);
     const threadId = await db.transaction().execute(async (trx) => {
       const thread = await trx
@@ -311,7 +325,7 @@ export const createCommentService = (
   ) => {
     const { thread, access } = await threadFor(actor, threadId);
     const text = cleanText(input.text);
-    const mentions = await mentionsOf(input.mentions);
+    const mentions = await mentionsOf(input.mentions, access.scene.id);
     await db.transaction().execute(async (trx) => {
       await trx
         .insertInto("comments")
@@ -449,9 +463,26 @@ export const createCommentService = (
     changed(access.scene.id);
   };
 
+  /**
+   * delete a whole thread: whoever manages the scene, or its author as long
+   * as nobody else has answered
+   */
   const removeThread = async (actor: Actor, threadId: string) => {
     const { thread, access } = await threadFor(actor, threadId);
-    if (thread.created_by !== actor.id && !access.canManage) {
+    let allowed = access.canManage;
+    if (!allowed && thread.created_by === actor.id) {
+      const others = await db
+        .selectFrom("comments")
+        .select("id")
+        .where("thread_id", "=", thread.id)
+        .where("deleted_at", "is", null)
+        .where((eb) =>
+          eb.or([eb("author_id", "is", null), eb("author_id", "!=", actor.id)]),
+        )
+        .executeTakeFirst();
+      allowed = !others;
+    }
+    if (!allowed) {
       throw new HttpError(403, "forbidden", "Dafür fehlen dir die Rechte.");
     }
     await db

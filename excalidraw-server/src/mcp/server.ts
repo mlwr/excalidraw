@@ -17,6 +17,7 @@ import {
   updateList,
 } from "../api/validate.js";
 import { HttpError } from "../util/http.js";
+import { searchText } from "../util/validate.js";
 import { actorOf } from "../workspace/access.js";
 import { cleanName } from "../workspace/service.js";
 
@@ -40,6 +41,8 @@ const INSTRUCTIONS = `Excalidraw workspace of the company intranet: hand-drawn s
 - Change labels, colors, positions with update_elements; delete with delete_elements. Element ids come from get_scene or from earlier results.
 - People who have a scene open see every change immediately.
 - Write labels and comments in the language the user writes in. Every result contains the scene URL; share it with the user.`;
+
+const MAX_BATCH = 10;
 
 const fillStyle = z.enum(["hachure", "cross-hatch", "solid", "zigzag"]);
 const strokeStyle = z.enum(["solid", "dashed", "dotted"]);
@@ -156,6 +159,7 @@ export const createMcpServer = (
     comments: CommentService;
   },
   auth: AuthContext,
+  log: (error: unknown) => void,
 ) => {
   const { workspace, operations, comments } = services;
   const actor = actorOf(auth.user);
@@ -186,7 +190,9 @@ export const createMcpServer = (
             }`,
           );
         }
-        throw error;
+        // anything else is ours: log it, tell the model only that it failed
+        log(error);
+        return failure("Internal error. Please try again later.");
       }
     };
 
@@ -229,7 +235,7 @@ export const createMcpServer = (
       false,
       async (args: { query?: string; collectionId?: string; limit?: number }) =>
         workspace.listScenes(actor, {
-          query: args.query?.trim().slice(0, 100) || undefined,
+          query: searchText(args.query) || undefined,
           collectionId: args.collectionId,
           limit: args.limit ?? 20,
           offset: 0,
@@ -248,7 +254,7 @@ export const createMcpServer = (
     },
     tool(false, async (args: { sceneId: string }) => {
       const access = await workspace.sceneFor(actor, args.sceneId, "viewer");
-      const { elements, revision } = workspace.readContent(access);
+      const { elements, revision } = await workspace.readContent(access);
       return {
         scene: { ...(await workspace.describeAccess(access)), revision },
         drawing: describeElements(elements),
@@ -490,9 +496,9 @@ export const createMcpServer = (
             args.sceneId,
             "viewer",
           );
-          const element = workspace
-            .readContent(access)
-            .elements.find((el) => el.id === args.elementId && !el.isDeleted);
+          const element = (await workspace.readContent(access)).elements.find(
+            (el) => el.id === args.elementId && !el.isDeleted,
+          );
           if (!element) {
             throw new HttpError(
               404,
@@ -546,7 +552,20 @@ export const registerMcp = (
   requireToken: preHandlerHookHandler,
 ) => {
   const handle = async (request: FastifyRequest, reply: FastifyReply) => {
-    const server = createMcpServer(services, request.auth!);
+    // old clients may send JSON-RPC batches: a few messages at most
+    if (Array.isArray(request.body) && request.body.length > MAX_BATCH) {
+      return reply.code(400).send({
+        jsonrpc: "2.0",
+        error: {
+          code: -32600,
+          message: `At most ${MAX_BATCH} messages per request.`,
+        },
+        id: null,
+      });
+    }
+    const server = createMcpServer(services, request.auth!, (error) =>
+      request.log.error({ err: error }, "MCP tool failed"),
+    );
     // stateless: one server and transport per request, answers as JSON
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -579,7 +598,7 @@ export const registerMcp = (
     {
       preHandler: requireToken,
       config: apiRateLimit(ctx),
-      bodyLimit: 10 * 1024 * 1024,
+      bodyLimit: 2 * 1024 * 1024,
     },
     handle,
   );

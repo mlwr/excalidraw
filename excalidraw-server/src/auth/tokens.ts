@@ -48,10 +48,27 @@ export class TokenStore {
     private readonly config: Config,
   ) {}
 
-  /** user and token for a bearer token, or null if it is not valid (now) */
+  get loginMaxAgeDays() {
+    return this.config.api.loginMaxAgeDays;
+  }
+
+  /** e.g. when Keycloak says the person may no longer use the app */
+  async revokeAll(userId: string) {
+    await this.db
+      .updateTable("api_tokens")
+      .set({ revoked_at: sql`now()` })
+      .where("user_id", "=", userId)
+      .where("revoked_at", "is", null)
+      .execute();
+  }
+
+  /** user and token for a bearer token, or why it is not valid (now) */
   async resolve(
     token: string,
-  ): Promise<{ user: User; token: ApiToken } | null> {
+  ): Promise<
+    | { user: User; token: ApiToken }
+    | { error: "invalid_token" | "login_required" }
+  > {
     const row = await this.db
       .selectFrom("api_tokens")
       .selectAll()
@@ -60,7 +77,7 @@ export class TokenStore {
       .where("expires_at", ">", sql<Date>`now()`)
       .executeTakeFirst();
     if (!row) {
-      return null;
+      return { error: "invalid_token" };
     }
     const user = await this.db
       .selectFrom("users")
@@ -69,7 +86,18 @@ export class TokenStore {
       .executeTakeFirst();
     // roles as of the user's last login
     if (!user || !mayUseApi(this.config, user)) {
-      return null;
+      return { error: "invalid_token" };
+    }
+    // ... which must be recent, so that people who left or lost access in
+    // Keycloak (and no longer sign in) lose their tokens too
+    const maxAge = this.config.api.loginMaxAgeDays;
+    if (
+      maxAge > 0 &&
+      (!user.last_login_at ||
+        Date.now() - new Date(user.last_login_at).getTime() >
+          maxAge * 24 * 3600 * 1000)
+    ) {
+      return { error: "login_required" };
     }
     if (
       !row.last_used_at ||
@@ -94,15 +122,24 @@ export const createRequireToken =
   (tokens: TokenStore): preHandlerHookHandler =>
   async (request: FastifyRequest, reply: FastifyReply) => {
     const token = bearerToken(request.headers.authorization);
-    const resolved = token ? await tokens.resolve(token) : null;
-    if (!resolved) {
+    const resolved = token
+      ? await tokens.resolve(token)
+      : { error: "invalid_token" as const };
+    if ("error" in resolved) {
       reply.header("www-authenticate", 'Bearer error="invalid_token"');
-      return sendError(
-        reply,
-        401,
-        "invalid_token",
-        "API-Token fehlt, ist ungültig, abgelaufen oder widerrufen.",
-      );
+      return resolved.error === "login_required"
+        ? sendError(
+            reply,
+            401,
+            "login_required",
+            `API-Tokens gelten nur, wenn du dich in den letzten ${tokens.loginMaxAgeDays} Tagen in Excalidraw angemeldet hast. Bitte einmal anmelden.`,
+          )
+        : sendError(
+            reply,
+            401,
+            "invalid_token",
+            "API-Token fehlt, ist ungültig, abgelaufen oder widerrufen.",
+          );
     }
     if (
       !SAFE_METHODS.has(request.method) &&

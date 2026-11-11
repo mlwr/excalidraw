@@ -47,6 +47,7 @@ export const ApiTokensDialog = ({ onClose }: { onClose: () => void }) => {
   const [state, setState] = useState<{
     allowed: boolean;
     maxDays: number;
+    loginMaxAgeDays: number;
     mcpEnabled: boolean;
     tokens: ApiTokenInfo[];
   } | null>(null);
@@ -117,6 +118,13 @@ export const ApiTokensDialog = ({ onClose }: { onClose: () => void }) => {
         Mit einem persönlichen Token greifen Skripte (REST-API) und
         KI-Assistenten (MCP) auf deine Szenen zu – mit genau deinen Rechten. Gib
         Tokens nicht weiter.
+        {state && state.loginMaxAgeDays > 0 && (
+          <>
+            {" "}
+            Tokens wirken, solange du dich mindestens alle{" "}
+            {state.loginMaxAgeDays} Tage in Excalidraw anmeldest.
+          </>
+        )}
       </p>
 
       {state && !state.allowed && (

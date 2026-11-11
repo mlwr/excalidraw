@@ -23,6 +23,21 @@ import type {
 import type { Actor } from "../workspace/access.js";
 import type { WorkspaceService } from "../workspace/service.js";
 
+/** bounding box of elements (a loop: spreading huge arrays overflows) */
+const boundingBox = (elements: readonly SceneElement[]) => {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const element of elements) {
+    minX = Math.min(minX, element.x);
+    minY = Math.min(minY, element.y);
+    maxX = Math.max(maxX, element.x + element.width);
+    maxY = Math.max(maxY, element.y + element.height);
+  }
+  return { minX, minY, maxX, maxY };
+};
+
 const round = (value: unknown) =>
   typeof value === "number" ? Math.round(value * 10) / 10 : value;
 
@@ -120,12 +135,13 @@ export const describeElements = (
       return base;
     });
 
-  const bounds = live.length
+  const box = live.length ? boundingBox(live) : null;
+  const bounds = box
     ? {
-        minX: Math.round(Math.min(...live.map((el) => el.x))),
-        minY: Math.round(Math.min(...live.map((el) => el.y))),
-        maxX: Math.round(Math.max(...live.map((el) => el.x + el.width))),
-        maxY: Math.round(Math.max(...live.map((el) => el.y + el.height))),
+        minX: Math.round(box.minX),
+        minY: Math.round(box.minY),
+        maxX: Math.round(box.maxX),
+        maxY: Math.round(box.maxY),
       }
     : null;
   return {
@@ -205,8 +221,8 @@ export const createSceneOperations = (workspace: WorkspaceService) => {
         const live = elements.filter((element) => !element.isDeleted);
         const origin = live.length
           ? {
-              x: Math.max(...live.map((el) => el.x + el.width)) + 200,
-              y: Math.min(...live.map((el) => el.y)),
+              x: boundingBox(live).maxX + 200,
+              y: boundingBox(live).minY,
             }
           : { x: 0, y: 0 };
         const change = addSkeletons(
@@ -274,12 +290,21 @@ export const createSceneOperations = (workspace: WorkspaceService) => {
       expectedRevision?: number | null;
     },
   ) => {
+    const files = workspace.validateFiles(input.files);
     const access = await workspace.sceneFor(actor, sceneId, "editor");
-    const { key } = workspace.readContent(access);
+    const { key, revision } = await workspace.readContent(access);
+    if (input.expectedRevision != null && input.expectedRevision !== revision) {
+      throw new HttpError(
+        409,
+        "conflict",
+        `Die Szene wurde inzwischen geändert (Revision ${revision}).`,
+        { revision },
+      );
+    }
     const storedFiles = await workspace.storeFiles(
       access.scene.id,
       key,
-      input.files,
+      files,
       actor.id,
     );
     const result = await workspace.changeContent(

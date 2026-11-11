@@ -53,6 +53,8 @@ api:
   mcpEnabled: true
   # longest validity of a token in days
   tokenMaxDays: 365
+  # tokens work only if their person signed in within this many days (0 = off)
+  loginMaxAgeDays: 30
   # Keycloak role needed to create and use tokens; empty = everyone
   requiredRole: ""
   # requests per token and minute

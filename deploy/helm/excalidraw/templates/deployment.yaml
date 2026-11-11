@@ -111,6 +111,8 @@ spec:
               value: {{ .Values.api.mcpEnabled | quote }}
             - name: API_TOKEN_MAX_DAYS
               value: {{ .Values.api.tokenMaxDays | quote }}
+            - name: API_TOKEN_LOGIN_MAX_AGE_DAYS
+              value: {{ .Values.api.loginMaxAgeDays | quote }}
             {{- if .Values.api.requiredRole }}
             - name: API_REQUIRED_ROLE
               value: {{ .Values.api.requiredRole | quote }}

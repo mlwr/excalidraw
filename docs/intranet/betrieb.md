@@ -38,7 +38,7 @@ In der Admin-Konsole von Keycloak im gewünschten Realm:
 
 Soll nur ein Teil der Belegschaft Zugriff haben, `OIDC_REQUIRED_ROLE=excalidraw-user` setzen. Wer die Rolle nicht hat, sieht nach dem Login einen Hinweis statt der App.
 
-Sollen nur bestimmte Personen API-Tokens für Skripte und KI-Assistenten bekommen, eine weitere Client-Rolle (z. B. `excalidraw-api`) anlegen, zuweisen und im Chart `api.requiredRole: excalidraw-api` setzen. Rollen werden bei der Anmeldung übernommen: Wer die Rolle verliert, kann seine Tokens nach dem nächsten Login nicht mehr benutzen.
+Sollen nur bestimmte Personen API-Tokens für Skripte und KI-Assistenten bekommen, eine weitere Client-Rolle (z. B. `excalidraw-api`) anlegen, zuweisen und im Chart `api.requiredRole: excalidraw-api` setzen. Rollen und Gruppen werden bei der Anmeldung übernommen. Wird eine Anmeldung abgewiesen, weil die nötige Rolle fehlt, widerruft der Server alle Tokens der Person. Wer sich gar nicht mehr anmeldet (z. B. nach dem Austritt), verliert die Wirkung seiner Tokens nach `API_TOKEN_LOGIN_MAX_AGE_DAYS` Tagen (Standard 30).
 
 ## 3. Mit Helm installieren
 
@@ -154,6 +154,7 @@ Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. 
 | `API_ENABLED` | `true` | REST-API unter `/api/v1` und API-Tokens |
 | `MCP_ENABLED` | `true` | MCP-Server unter `/mcp` (braucht die API) |
 | `API_TOKEN_MAX_DAYS` | `365` | Längste Gültigkeit eines Tokens in Tagen |
+| `API_TOKEN_LOGIN_MAX_AGE_DAYS` | `30` | Tokens gelten nur, wenn sich ihre Person in so vielen Tagen in der App angemeldet hat (Rollen und Gruppen stammen aus dieser Anmeldung); `0` = ohne Frist |
 | `API_REQUIRED_ROLE` | leer | Keycloak-Rolle, ohne die niemand Tokens anlegen oder benutzen darf; leer = alle (Admins dürfen immer) |
 | `API_RATE_LIMIT_PER_MINUTE` | `300` | Anfragen pro Token und Minute |
 | `TRUST_PROXY` | `1` | Vertrauenswürdige Proxy-Hops vor dem Pod |

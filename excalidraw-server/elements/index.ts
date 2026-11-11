@@ -139,7 +139,18 @@ export const restore = (elements: readonly unknown[]) =>
   restoreElements(elements as ExcalidrawElement[], null, {
     refreshDimensions: false,
     repairBindings: true,
-  });
+  }).map((element) =>
+    // versions are counters: whole numbers (they end up in a bigint sum)
+    Number.isSafeInteger(element.version) &&
+    element.version > 0 &&
+    Number.isSafeInteger(element.versionNonce)
+      ? element
+      : {
+          ...element,
+          version: Math.max(1, Math.trunc(Number(element.version)) || 1),
+          versionNonce: Math.trunc(Number(element.versionNonce)) || 0,
+        },
+  );
 
 // --- replacing -----------------------------------------------------------------
 
@@ -201,6 +212,20 @@ type Arrow = ExcalidrawElementSkeleton & {
   end?: { id?: string };
 };
 
+/** element fields only the server sets on new elements */
+const SERVER_FIELDS = [
+  "version",
+  "versionNonce",
+  "updated",
+  "index",
+  "isDeleted",
+  "seed",
+  "boundElements",
+  "containerId",
+  "startBinding",
+  "endBinding",
+];
+
 const isBoundArrow = (skeleton: ExcalidrawElementSkeleton): skeleton is Arrow =>
   ARROW_TYPES.has(skeleton.type) &&
   !!((skeleton as Arrow).start?.id || (skeleton as Arrow).end?.id);
@@ -217,6 +242,12 @@ export const addSkeletons = (
   const before = versionsOf(current);
   const taken = new Set(current.map((element) => element.id));
   const batch = cloneJSON(skeletons) as ExcalidrawElementSkeleton[];
+  // what the server keeps track of itself
+  for (const skeleton of batch) {
+    for (const key of SERVER_FIELDS) {
+      delete (skeleton as Record<string, unknown>)[key];
+    }
+  }
 
   // ids of the new elements must be new to the scene (deleted ones included)
   const renamed = new Map<string, string>();

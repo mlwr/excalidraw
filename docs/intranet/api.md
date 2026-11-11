@@ -16,9 +16,9 @@ Jede Anfrage trägt das Token im Header:
 curl -H "Authorization: Bearer $EXCALIDRAW_TOKEN" https://excalidraw.intranet.example/api/v1/scenes
 ```
 
-Ein Token handelt mit den Rechten seiner Person, so wie sie bei der letzten Anmeldung aus Keycloak kamen (Rollen und Gruppen). Es läuft nach der gewählten Zeit ab (höchstens `API_TOKEN_MAX_DAYS`), lässt sich jederzeit widerrufen und wirkt nicht mehr, wenn die Person die nötige Rolle verliert (`OIDC_REQUIRED_ROLE`, optional `API_REQUIRED_ROLE`). Der Sitzungs-Cookie der App gilt für `/api/v1` nicht, Tokens gelten umgekehrt nicht für die App.
+Ein Token handelt mit den Rechten seiner Person, so wie sie bei der letzten Anmeldung aus Keycloak kamen (Rollen und Gruppen). Deshalb gilt es nur, solange sich die Person regelmäßig in der App anmeldet (Standard: in den letzten 30 Tagen, `API_TOKEN_LOGIN_MAX_AGE_DAYS`); sonst antwortet die API mit `401 login_required`. Es läuft nach der gewählten Zeit ab (höchstens `API_TOKEN_MAX_DAYS`), lässt sich jederzeit widerrufen und wirkt nicht mehr, wenn die Person die nötige Rolle verliert (`OIDC_REQUIRED_ROLE`, optional `API_REQUIRED_ROLE`). Der Sitzungs-Cookie der App gilt für `/api/v1` nicht, Tokens gelten umgekehrt nicht für die App.
 
-Grenzen: `API_RATE_LIMIT_PER_MINUTE` Anfragen pro Token und Minute (Standard 300), Szenen bis `MAX_SCENE_SIZE_MB`, Bilder bis `MAX_FILE_SIZE_MB`.
+Grenzen: `API_RATE_LIMIT_PER_MINUTE` Anfragen pro Token und Minute (Standard 300), Szenen bis `MAX_SCENE_SIZE_MB`, Bilder bis `MAX_FILE_SIZE_MB`. Texte und Beschriftungen haben höchstens 2000 Zeichen, eine Anfrage höchstens 50 000 Zeichen Text; Breite und Höhe höchstens 100 000. Ein Export liefert Bilder bis zur Größe `MAX_SCENE_SIZE_MB`; was darüber hinausgeht, nennt `filesOmitted`.
 
 ## Endpunkte
 

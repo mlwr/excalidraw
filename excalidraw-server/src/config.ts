@@ -87,6 +87,11 @@ export interface Config {
     mcpEnabled: boolean;
     /** longest lifetime of a token */
     tokenMaxDays: number;
+    /**
+     * tokens work only while their person signed in to the app within this
+     * many days (roles and groups are as of that login); 0 = no limit
+     */
+    loginMaxAgeDays: number;
     /** role needed to create and use tokens; null = everyone */
     requiredRole: string | null;
     /** requests per token and minute */
@@ -326,6 +331,15 @@ export const loadConfig = (env: Env = process.env): Config => {
       tokenMaxDays: Math.round(
         parseNumber("API_TOKEN_MAX_DAYS", env.API_TOKEN_MAX_DAYS, 365, errors),
       ),
+      loginMaxAgeDays: (() => {
+        const value = env.API_TOKEN_LOGIN_MAX_AGE_DAYS;
+        if (value !== undefined && value.trim() === "0") {
+          return 0;
+        }
+        return Math.round(
+          parseNumber("API_TOKEN_LOGIN_MAX_AGE_DAYS", value, 30, errors),
+        );
+      })(),
       requiredRole: env.API_REQUIRED_ROLE?.trim() || null,
       rateLimitPerMinute: Math.round(
         parseNumber(

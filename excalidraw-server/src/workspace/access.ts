@@ -78,8 +78,29 @@ export const collectionRole = async (
   return maxRole(grants.map((grant) => grant.role as GrantRole));
 };
 
+/** a scene without its (possibly large) content */
+export type SceneMeta = Omit<Scene, "iv" | "ciphertext">;
+
+/** columns of a scene without its content */
+export const SCENE_META_COLUMNS = [
+  "id",
+  "workspace_id",
+  "collection_id",
+  "name",
+  "created_by",
+  "updated_by",
+  "created_at",
+  "updated_at",
+  "deleted_at",
+  "revision",
+  "scene_version",
+  "key_sealed",
+  "thumbnail_updated_at",
+  "read_link_token",
+] as const;
+
 export interface SceneAccess {
-  scene: Scene;
+  scene: SceneMeta;
   collection: Collection;
   collectionRole: Role;
   /** viewer or editor (or none) */
@@ -94,7 +115,7 @@ export const sceneAccess = async (
 ): Promise<SceneAccess | null> => {
   const scene = await db
     .selectFrom("scenes")
-    .selectAll()
+    .select(SCENE_META_COLUMNS)
     .where("id", "=", sceneId)
     .where("deleted_at", "is", null)
     .executeTakeFirst();

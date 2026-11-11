@@ -19,6 +19,8 @@ import {
   atLeast,
   collectionRole,
   grantMatches,
+  maxRole,
+  SCENE_META_COLUMNS,
   sceneAccess,
 } from "./access.js";
 import {
@@ -30,8 +32,8 @@ import {
 } from "./content.js";
 
 import type { AppContext } from "../context.js";
-import type { Collection, Scene } from "../db/schema.js";
-import type { Actor, Role, SceneAccess } from "./access.js";
+import type { Collection } from "../db/schema.js";
+import type { Actor, Role, SceneAccess, SceneMeta } from "./access.js";
 import type { Change, SceneElement } from "../../vendor/elements.mjs";
 
 export const SCENE_ID_RE = /^[a-zA-Z0-9_-]{8,64}$/;
@@ -171,7 +173,7 @@ export const createWorkspaceService = (ctx: AppContext) => {
   /** what clients of the API see of a scene */
   const describeScenes = async (
     items: {
-      scene: Scene;
+      scene: SceneMeta;
       collection: Collection;
       role: Role;
       canManage: boolean;
@@ -251,20 +253,20 @@ export const createWorkspaceService = (ctx: AppContext) => {
       offset: number;
     },
   ) => {
-    let collectionIds: string[];
+    let accessible: { collection: Collection; role: Role }[];
     if (options.collectionId) {
-      const { collection } = await collectionFor(
-        actor,
-        options.collectionId,
-        "viewer",
-      );
-      collectionIds = [collection.id];
+      accessible = [await collectionFor(actor, options.collectionId, "viewer")];
     } else {
       await ensurePersonalCollection(actor.id);
-      collectionIds = (await accessibleCollections(db, actor)).map(
-        (item) => item.collection.id,
-      );
+      accessible = await accessibleCollections(db, actor);
     }
+    const collectionRoles = new Map(
+      accessible.map(({ collection, role }) => [collection.id, role]),
+    );
+    const collections = new Map(
+      accessible.map(({ collection }) => [collection.id, collection]),
+    );
+    const collectionIds = [...collections.keys()];
 
     let base = db
       .selectFrom("scenes")
@@ -296,25 +298,63 @@ export const createWorkspaceService = (ctx: AppContext) => {
         ? "created_at"
         : "updated_at";
     const rows = await base
-      .selectAll()
+      .select(SCENE_META_COLUMNS)
       .orderBy(column, options.sort === "name" ? "asc" : "desc")
       .orderBy("id")
       .limit(options.limit)
       .offset(options.offset)
       .execute();
 
-    const items = [];
-    for (const row of rows) {
-      const access = await sceneAccess(db, actor, row.id);
-      if (access && access.role !== "none") {
-        items.push({
-          scene: access.scene,
-          collection: access.collection,
-          role: access.role,
-          canManage: access.canManage,
-        });
+    // the same rights as sceneAccess(), for the whole page at once
+    const direct = new Map<string, Role>();
+    if (rows.length) {
+      const grants = await db
+        .selectFrom("scene_grants")
+        .select(["scene_id", "role"])
+        .where(
+          "scene_id",
+          "in",
+          rows.map((row) => row.id),
+        )
+        .where(grantMatches(actor))
+        .execute();
+      for (const grant of grants) {
+        direct.set(
+          grant.scene_id,
+          maxRole([direct.get(grant.scene_id) || "none", grant.role as Role]),
+        );
       }
     }
+    const unknown = [
+      ...new Set(
+        rows
+          .map((row) => row.collection_id)
+          .filter((id) => !collections.has(id)),
+      ),
+    ];
+    if (unknown.length) {
+      const more = await db
+        .selectFrom("collections")
+        .selectAll()
+        .where("id", "in", unknown)
+        .execute();
+      more.forEach((collection) => collections.set(collection.id, collection));
+    }
+    const items = rows
+      .map((scene) => {
+        const fromCollection =
+          collectionRoles.get(scene.collection_id) || "none";
+        return {
+          scene,
+          collection: collections.get(scene.collection_id)!,
+          role: maxRole([
+            fromCollection === "manager" ? "editor" : fromCollection,
+            direct.get(scene.id) || "none",
+          ]),
+          canManage: atLeast(fromCollection, "editor"),
+        };
+      })
+      .filter((item) => item.role !== "none" && item.collection);
     return { total, scenes: await describeScenes(items) };
   };
 
@@ -397,19 +437,28 @@ export const createWorkspaceService = (ctx: AppContext) => {
     ctx.realtime.closeSceneRoom(access.scene.id);
   };
 
-  const keyOf = (scene: Scene) => openSceneKey(masterKey, scene.key_sealed);
+  const keyOf = (scene: SceneMeta) => openSceneKey(masterKey, scene.key_sealed);
 
-  const elementsOf = (scene: Scene, key: string): SceneElement[] =>
-    Number(scene.revision) === 0 || !scene.iv || !scene.ciphertext
-      ? []
-      : decryptElements(key, scene.iv, scene.ciphertext);
-
-  const readContent = (access: SceneAccess) => {
+  /** the drawing of a scene the actor may see (access checked before) */
+  const readContent = async (access: SceneAccess) => {
     const key = keyOf(access.scene);
+    const row = await db
+      .selectFrom("scenes")
+      .select(["iv", "ciphertext", "revision"])
+      .where("id", "=", access.scene.id)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!row) {
+      throw notFound();
+    }
+    const revision = Number(row.revision);
     return {
       key,
-      elements: elementsOf(access.scene, key),
-      revision: Number(access.scene.revision),
+      revision,
+      elements:
+        revision === 0 || !row.iv || !row.ciphertext
+          ? ([] as SceneElement[])
+          : decryptElements(key, row.iv, row.ciphertext),
     };
   };
 
@@ -426,7 +475,7 @@ export const createWorkspaceService = (ctx: AppContext) => {
   ) => {
     for (let attempt = 0; attempt < MAX_SAVE_ATTEMPTS; attempt++) {
       const access = await sceneFor(actor, sceneId, "editor");
-      const { key, elements, revision } = readContent(access);
+      const { key, elements, revision } = await readContent(access);
       if (
         options.expectedRevision != null &&
         options.expectedRevision !== revision
@@ -477,7 +526,10 @@ export const createWorkspaceService = (ctx: AppContext) => {
   const fileKey = (sceneId: string, fileId: string) =>
     `files/scenes/${sceneId}/${fileId}`;
 
-  /** image files of the scene (data URLs), for export */
+  /**
+   * image files of the scene (data URLs), for export; files beyond the
+   * scene size limit are left out (and named)
+   */
   const readFiles = async (
     sceneId: string,
     key: string,
@@ -495,13 +547,30 @@ export const createWorkspaceService = (ctx: AppContext) => {
         .map((element) => element.fileId as string),
     );
     const files: Record<string, SceneFile> = {};
+    const omitted: string[] = [];
+    let total = 0;
     for (const id of ids) {
+      if (total >= config.limits.maxSceneBytes) {
+        omitted.push(id);
+        continue;
+      }
       const stored = await blobs.get(fileKey(sceneId, id));
       if (!stored) {
         continue;
       }
       try {
-        const { metadata, dataURL } = decodeFile(key, stored.data);
+        // a data URL is at most maxFileBytes (the browser checks it before
+        // uploading); inflating stops there
+        const { metadata, dataURL } = decodeFile(
+          key,
+          stored.data,
+          config.limits.maxFileBytes + 64 * 1024,
+        );
+        if (total + dataURL.length > config.limits.maxSceneBytes) {
+          omitted.push(id);
+          continue;
+        }
+        total += dataURL.length;
         files[id] = {
           id,
           mimeType: metadata.mimeType,
@@ -509,27 +578,21 @@ export const createWorkspaceService = (ctx: AppContext) => {
           created: metadata.created,
         };
       } catch {
-        // unreadable file: leave it out like a missing one
+        // unreadable or oversized file: leave it out like a missing one
       }
     }
-    return files;
+    return { files, omitted };
   };
 
-  /** store image files that come with imported elements (data URLs) */
-  const storeFiles = async (
-    sceneId: string,
-    key: string,
-    files: unknown,
-    userId: string,
-  ) => {
+  /** check image files that come with imported elements (data URLs) */
+  const validateFiles = (files: unknown) => {
     if (files === undefined || files === null) {
-      return 0;
+      return [];
     }
     if (typeof files !== "object" || Array.isArray(files)) {
       throw new HttpError(400, "invalid_files", "files muss ein Objekt sein.");
     }
-    let stored = 0;
-    for (const [id, value] of Object.entries(files as Record<string, any>)) {
+    return Object.entries(files as Record<string, any>).map(([id, value]) => {
       const mimeType = value?.mimeType;
       const dataURL = value?.dataURL;
       const match =
@@ -551,26 +614,49 @@ export const createWorkspaceService = (ctx: AppContext) => {
           )}: erwartet wird ein Bild als data-URL (png, jpeg, gif, webp, svg).`,
         );
       }
-      if ((match[2].length * 3) / 4 > config.limits.maxFileBytes) {
+      if (dataURL.length > config.limits.maxFileBytes) {
         throw new HttpError(413, "file_too_large", `Datei ${id} ist zu groß.`);
       }
+      return {
+        id,
+        mimeType: mimeType as string,
+        dataURL: dataURL as string,
+        created: Number(value?.created) || Date.now(),
+      };
+    });
+  };
+
+  /** store checked image files of a scene (write-once, ids are hashes) */
+  const storeFiles = async (
+    sceneId: string,
+    key: string,
+    files: ReturnType<typeof validateFiles>,
+    userId: string,
+  ) => {
+    let stored = 0;
+    for (const file of files) {
       const created = await blobs.putIfAbsent(
-        fileKey(sceneId, id),
+        fileKey(sceneId, file.id),
         encodeFile(
           key,
           {
-            id,
-            mimeType,
-            created: Number(value?.created) || Date.now(),
+            id: file.id,
+            mimeType: file.mimeType,
+            created: file.created,
             lastRetrieved: Date.now(),
           },
-          dataURL,
+          file.dataURL,
         ),
         { contentType: "application/octet-stream", createdBy: userId },
       );
       stored += created ? 1 : 0;
     }
     return stored;
+  };
+
+  /** remove a scene again that could not be filled (failed import) */
+  const discardScene = async (sceneId: string) => {
+    await db.deleteFrom("scenes").where("id", "=", sceneId).execute();
   };
 
   return {
@@ -587,7 +673,9 @@ export const createWorkspaceService = (ctx: AppContext) => {
     readContent,
     changeContent,
     readFiles,
+    validateFiles,
     storeFiles,
+    discardScene,
   };
 };
 
