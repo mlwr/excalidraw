@@ -57,6 +57,15 @@ const drawnPixels = (page: Page) =>
 
 /** close the open dialog and wait until it is gone */
 const closeDialog = async (page: Page) => {
+  // the workspace's own dialogs (e.g. sharing a scene)
+  if (await page.locator(".ws-dialog__backdrop").count()) {
+    await page.click(".ws-dialog__close");
+    await page.waitForSelector(".ws-dialog__backdrop", {
+      state: "detached",
+      timeout: 5000,
+    });
+    return;
+  }
   if (!(await page.locator(".Modal__background").count())) {
     return;
   }
