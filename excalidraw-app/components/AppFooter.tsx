@@ -5,7 +5,14 @@ import { DebugFooter, isVisualDebuggerEnabled } from "./DebugCanvas";
 import { EncryptedIcon } from "./EncryptedIcon";
 
 export const AppFooter = React.memo(
-  ({ onChange }: { onChange: () => void }) => {
+  ({
+    onChange,
+    showEncryptionHint = true,
+  }: {
+    onChange: () => void;
+    /** workspace scenes are encrypted with server-held keys, not end-to-end */
+    showEncryptionHint?: boolean;
+  }) => {
     return (
       <Footer>
         <div
@@ -16,7 +23,7 @@ export const AppFooter = React.memo(
           }}
         >
           {isVisualDebuggerEnabled() && <DebugFooter onChange={onChange} />}
-          <EncryptedIcon />
+          {showEncryptionHint && <EncryptedIcon />}
         </div>
       </Footer>
     );

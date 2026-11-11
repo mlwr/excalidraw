@@ -20,6 +20,7 @@ export interface RuntimeConfig {
   maxImageDimension: number;
   ai: { enabled: boolean };
   libraries: { browseUrl: string | null };
+  workspace: { enabled: boolean };
 }
 
 export type BootstrapResult =
@@ -34,6 +35,7 @@ const DEFAULT_CONFIG: RuntimeConfig = {
   maxImageDimension: 1440,
   ai: { enabled: false },
   libraries: { browseUrl: null },
+  workspace: { enabled: false },
 };
 
 const RETURN_HASH_KEY = "excalidraw-intranet-return-hash";

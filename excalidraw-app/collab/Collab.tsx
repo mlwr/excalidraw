@@ -87,6 +87,8 @@ import {
   saveUsernameToLocalStorage,
 } from "../data/localStorage";
 import { resetBrowserStateVersions } from "../data/tabSync";
+import { getActiveScene } from "../intranet/activeScene";
+import { LOCAL_EDITOR_PATH } from "../intranet/routes";
 import { getCurrentUser, getMaxFileUploadBytes } from "../intranet/session";
 
 import { collabErrorIndicatorAtom } from "./CollabError";
@@ -136,6 +138,8 @@ export interface CollabAPI {
 interface CollabProps {
   excalidrawAPI: ExcalidrawImperativeAPI;
 }
+
+const WORKSPACE_SCENE_SAVE_INTERVAL_MS = 2000;
 
 class Collab extends PureComponent<CollabProps, CollabState> {
   portal: Portal;
@@ -401,7 +405,12 @@ class Collab extends PureComponent<CollabProps, CollabState> {
       // that could have been saved in other tabs while we were collaborating
       resetBrowserStateVersions();
 
-      window.history.pushState({}, APP_NAME, window.location.origin);
+      // intranet fork: stay in the local editor (the root is the dashboard)
+      window.history.pushState(
+        {},
+        APP_NAME,
+        `${window.location.origin}${LOCAL_EDITOR_PATH}`,
+      );
       this.destroySocketClient();
 
       LocalData.fileStorage.reset();
@@ -1012,7 +1021,11 @@ class Collab extends PureComponent<CollabProps, CollabState> {
         );
       }
     },
-    SYNC_FULL_SCENE_INTERVAL_MS,
+    // intranet fork: workspace scenes are the server copy everyone opens, so
+    // they are saved within seconds instead of every 20 s
+    getActiveScene()
+      ? WORKSPACE_SCENE_SAVE_INTERVAL_MS
+      : SYNC_FULL_SCENE_INTERVAL_MS,
     { leading: false },
   );
 

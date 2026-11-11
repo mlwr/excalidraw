@@ -5,6 +5,8 @@ import React from "react";
 export const AppWelcomeScreen: React.FC<{
   onCollabDialogOpen: () => any;
   isCollabEnabled: boolean;
+  /** workspace scenes are saved on the server, not in the browser */
+  isWorkspaceScene?: boolean;
 }> = React.memo((props) => {
   const { t } = useI18n();
 
@@ -18,14 +20,26 @@ export const AppWelcomeScreen: React.FC<{
       <WelcomeScreen.Center>
         <WelcomeScreen.Center.Logo />
         <WelcomeScreen.Center.Heading>
-          {t("welcomeScreen.app.center_heading")}
-          <br />
-          {t("welcomeScreen.app.center_heading_line2")}
-          <br />
-          {t("welcomeScreen.app.center_heading_line3")}
+          {props.isWorkspaceScene ? (
+            <>
+              Diese Szene wird automatisch im Workspace gespeichert.
+              <br />
+              Alle mit Zugriff sehen deine Änderungen live.
+            </>
+          ) : (
+            <>
+              {t("welcomeScreen.app.center_heading")}
+              <br />
+              {t("welcomeScreen.app.center_heading_line2")}
+              <br />
+              {t("welcomeScreen.app.center_heading_line3")}
+            </>
+          )}
         </WelcomeScreen.Center.Heading>
         <WelcomeScreen.Center.Menu>
-          <WelcomeScreen.Center.MenuItemLoadScene />
+          {!props.isWorkspaceScene && (
+            <WelcomeScreen.Center.MenuItemLoadScene />
+          )}
           <WelcomeScreen.Center.MenuItemHelp />
           {props.isCollabEnabled && (
             <WelcomeScreen.Center.MenuItemLiveCollaborationTrigger

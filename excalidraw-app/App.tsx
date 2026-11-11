@@ -132,12 +132,18 @@ import DebugCanvas, {
 } from "./components/DebugCanvas";
 import { useSimulatedCollaborators } from "./debugCollaborators";
 import { AIComponents } from "./components/AI";
+import { LOCAL_EDITOR_PATH } from "./intranet/routes";
 import {
   getCurrentUser,
   getImageOptions,
   getRuntimeConfig,
   logout,
 } from "./intranet/session";
+import { activeSceneRoom, getActiveScene } from "./intranet/activeScene";
+import { registerEditorForThumbnails } from "./intranet/workspaceScene";
+import { EditorWorkspaceNav } from "./workspace/EditorWorkspaceNav";
+import { SaveToWorkspaceDialog } from "./workspace/SaveToWorkspaceDialog";
+import { SceneShareDialog } from "./workspace/SceneShareDialog";
 
 import "./index.scss";
 
@@ -224,7 +230,12 @@ const initializeScene = async (opts: {
   );
   const externalUrlMatch = window.location.hash.match(/^#url=(.*)$/);
 
-  const localDataState = importFromLocalStorage();
+  // intranet fork: a workspace scene (/s/<id>) is a live room whose key comes
+  // from the server; it never mixes with the drawing stored in this browser
+  const workspaceRoom = activeSceneRoom();
+  const localDataState = workspaceRoom ? null : importFromLocalStorage();
+  // after importing a link, stay in the local editor on reload
+  const localEditorUrl = `${window.location.origin}${LOCAL_EDITOR_PATH}`;
 
   let scene: Omit<
     RestoredDataState,
@@ -241,7 +252,8 @@ const initializeScene = async (opts: {
     appState: restoreAppState(localDataState?.appState, null),
   };
 
-  let roomLinkData = getCollaborationLinkData(window.location.href);
+  let roomLinkData =
+    workspaceRoom || getCollaborationLinkData(window.location.href);
   const isExternalScene = !!(id || jsonBackendMatch || roomLinkData);
   if (isExternalScene) {
     if (
@@ -276,7 +288,7 @@ const initializeScene = async (opts: {
       }
       scene.scrollToContent = true;
       if (!roomLinkData) {
-        window.history.replaceState({}, APP_NAME, window.location.origin);
+        window.history.replaceState({}, APP_NAME, localEditorUrl);
       }
     } else {
       // https://github.com/excalidraw/excalidraw/issues/1919
@@ -293,10 +305,10 @@ const initializeScene = async (opts: {
       }
 
       roomLinkData = null;
-      window.history.replaceState({}, APP_NAME, window.location.origin);
+      window.history.replaceState({}, APP_NAME, localEditorUrl);
     }
   } else if (externalUrlMatch) {
-    window.history.replaceState({}, APP_NAME, window.location.origin);
+    window.history.replaceState({}, APP_NAME, localEditorUrl);
 
     const url = externalUrlMatch[1];
     try {
@@ -342,6 +354,7 @@ const initializeScene = async (opts: {
           // necessary if we're invoking from a hashchange handler which doesn't
           // go through App.initializeScene() that resets this flag
           isLoading: false,
+          ...(workspaceRoom ? { name: getActiveScene()?.name } : {}),
         },
         elements: reconcileElements(
           scene?.elements || [],
@@ -461,6 +474,12 @@ const ExcalidrawWrapper = () => {
     }
   }, [excalidrawAPI]);
 
+  useEffect(() => {
+    if (excalidrawAPI && getActiveScene()) {
+      return registerEditorForThumbnails(excalidrawAPI);
+    }
+  }, [excalidrawAPI]);
+
   // ?collaborators=<N> — populate the canvas with N static fake
   // collaborators for exercising avatar/UserList UI without a real
   // collab room
@@ -563,6 +582,9 @@ const ExcalidrawWrapper = () => {
 
     const onHashChange = async (event: HashChangeEvent) => {
       event.preventDefault();
+      if (getActiveScene()) {
+        return;
+      }
       const libraryUrlTokens = parseLibraryTokensFromUrl();
       if (!libraryUrlTokens) {
         if (
@@ -906,6 +928,9 @@ const ExcalidrawWrapper = () => {
 
   const isAIEnabled = getRuntimeConfig().ai.enabled;
   const currentUser = getCurrentUser();
+  const activeScene = getActiveScene();
+  const isWorkspaceEnabled =
+    !!currentUser && getRuntimeConfig().workspace.enabled;
 
   return (
     <div
@@ -932,6 +957,10 @@ const ExcalidrawWrapper = () => {
         }}
         aiEnabled={isAIEnabled}
         imageOptions={imageOptions}
+        viewModeEnabled={activeScene?.role === "viewer" ? true : undefined}
+        renderTopLeftUI={() =>
+          isWorkspaceEnabled ? <EditorWorkspaceNav scene={activeScene} /> : null
+        }
         langCode={langCode}
         renderCustomStats={renderCustomStats}
         detectScroll={false}
@@ -971,19 +1000,25 @@ const ExcalidrawWrapper = () => {
         <AppMainMenu
           onCollabDialogOpen={onCollabDialogOpen}
           isCollaborating={isCollaborating}
-          isCollabEnabled={isCollabAvailable}
+          isCollabEnabled={isCollabAvailable && !activeScene}
+          isWorkspaceEnabled={isWorkspaceEnabled}
+          isWorkspaceScene={!!activeScene}
           theme={appTheme}
           refresh={() => forceRefresh((prev) => !prev)}
         />
         <AppWelcomeScreen
           onCollabDialogOpen={onCollabDialogOpen}
-          isCollabEnabled={isCollabAvailable}
+          isCollabEnabled={isCollabAvailable && !activeScene}
+          isWorkspaceScene={!!activeScene}
         />
         <OverwriteConfirmDialog>
           <OverwriteConfirmDialog.Actions.ExportToImage />
           <OverwriteConfirmDialog.Actions.SaveToDisk />
         </OverwriteConfirmDialog>
-        <AppFooter onChange={() => excalidrawAPI?.refresh()} />
+        <AppFooter
+          onChange={() => excalidrawAPI?.refresh()}
+          showEncryptionHint={!activeScene}
+        />
         {excalidrawAPI && isAIEnabled && (
           <AIComponents excalidrawAPI={excalidrawAPI} />
         )}
@@ -1010,22 +1045,28 @@ const ExcalidrawWrapper = () => {
           <Collab excalidrawAPI={excalidrawAPI} />
         )}
 
-        <ShareDialog
-          collabAPI={collabAPI}
-          onExportToBackend={async () => {
-            if (excalidrawAPI) {
-              try {
-                await onExportToBackend(
-                  excalidrawAPI.getSceneElements(),
-                  excalidrawAPI.getAppState(),
-                  excalidrawAPI.getFiles(),
-                );
-              } catch (error: any) {
-                setErrorMessage(error.message);
+        {activeScene ? (
+          <SceneShareDialog scene={activeScene} />
+        ) : (
+          <ShareDialog
+            collabAPI={collabAPI}
+            onExportToBackend={async () => {
+              if (excalidrawAPI) {
+                try {
+                  await onExportToBackend(
+                    excalidrawAPI.getSceneElements(),
+                    excalidrawAPI.getAppState(),
+                    excalidrawAPI.getFiles(),
+                  );
+                } catch (error: any) {
+                  setErrorMessage(error.message);
+                }
               }
-            }
-          }}
-        />
+            }}
+          />
+        )}
+
+        {isWorkspaceEnabled && !activeScene && <SaveToWorkspaceDialog />}
 
         <AppSidebar />
 
@@ -1040,7 +1081,7 @@ const ExcalidrawWrapper = () => {
             {
               label: t("labels.liveCollaboration"),
               category: DEFAULT_CATEGORIES.app,
-              predicate: isCollabAvailable,
+              predicate: isCollabAvailable && !activeScene,
               keywords: [
                 "team",
                 "multiplayer",
@@ -1060,7 +1101,8 @@ const ExcalidrawWrapper = () => {
             {
               label: t("roomDialog.button_stopSession"),
               category: DEFAULT_CATEGORIES.app,
-              predicate: () => !!collabAPI?.isCollaborating(),
+              predicate: () =>
+                !!collabAPI?.isCollaborating() && !getActiveScene(),
               keywords: [
                 "stop",
                 "session",

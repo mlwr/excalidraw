@@ -35,6 +35,11 @@ import {
   fromBase64,
   toBase64,
 } from "../intranet/api";
+import {
+  isRoomReadOnly,
+  notifySceneSaved,
+  sceneIdFromRoomId,
+} from "../intranet/sceneRoom";
 
 import { getSyncableElements } from ".";
 
@@ -65,14 +70,24 @@ const filesApiPath = (prefix: string, fileId: FileId) => {
   if (!scope || !ownerId) {
     throw new Error(`unknown file storage prefix: ${prefix}`);
   }
+  const sceneId = scope === "rooms" ? sceneIdFromRoomId(ownerId) : null;
+  if (sceneId) {
+    return `/api/scenes/${encodeURIComponent(
+      sceneId,
+    )}/files/${encodeURIComponent(fileId)}`;
+  }
   const apiScope = scope === "shareLinks" ? "share-links" : "rooms";
   return `/api/files/${apiScope}/${encodeURIComponent(
     ownerId,
   )}/${encodeURIComponent(fileId)}`;
 };
 
-const roomSceneUrl = (roomId: string) =>
-  `/api/rooms/${encodeURIComponent(roomId)}/scene`;
+const roomSceneUrl = (roomId: string) => {
+  const sceneId = sceneIdFromRoomId(roomId);
+  return sceneId
+    ? `/api/scenes/${encodeURIComponent(sceneId)}/content`
+    : `/api/rooms/${encodeURIComponent(roomId)}/scene`;
+};
 
 const encryptElements = async (
   key: string,
@@ -200,6 +215,11 @@ export const saveFilesToFirebase = async ({
   const erroredFiles: FileId[] = [];
   const savedFiles: FileId[] = [];
 
+  const roomId = prefix.replace(/^\/+/, "").split("/")[2];
+  if (isRoomReadOnly(roomId)) {
+    return { savedFiles, erroredFiles };
+  }
+
   // network errors and expired sessions reject the whole save so the caller
   // can tell the user (share links ignore `erroredFiles`, collab never
   // retries them); rejected uploads are reported per file
@@ -232,7 +252,9 @@ export const saveToFirebase = async (
     !roomId ||
     !roomKey ||
     !socket ||
-    isSavedToFirebase(portal, elements)
+    isSavedToFirebase(portal, elements) ||
+    // viewers of workspace scenes only watch
+    isRoomReadOnly(roomId)
   ) {
     return null;
   }
@@ -283,6 +305,11 @@ export const saveToFirebase = async (
   );
 
   SceneVersionCache.set(socket, storedElements);
+
+  const sceneId = sceneIdFromRoomId(roomId);
+  if (sceneId) {
+    notifySceneSaved(sceneId);
+  }
 
   return toBrandedType<RemoteExcalidrawElement[]>(storedElements);
 };
@@ -351,4 +378,19 @@ export const loadFilesFromFirebase = async (
   );
 
   return { loadedFiles, erroredFiles };
+};
+
+/**
+ * Intranet fork: initial content of a new workspace scene (import, "save to
+ * workspace"). Encrypted with the scene key like every later save.
+ */
+export const storeNewSceneContent = async (
+  roomId: string,
+  roomKey: string,
+  elements: readonly SyncableExcalidrawElement[],
+) => {
+  const document = await createSceneDocument(elements, roomKey);
+  if (!(await putStoredScene(roomId, document, null))) {
+    throw new Error("The scene already has content");
+  }
 };

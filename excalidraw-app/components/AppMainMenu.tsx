@@ -1,4 +1,9 @@
-import { eyeIcon, loginIcon } from "@excalidraw/excalidraw/components/icons";
+import {
+  ExportIcon,
+  eyeIcon,
+  LibraryIcon,
+  loginIcon,
+} from "@excalidraw/excalidraw/components/icons";
 import { MainMenu } from "@excalidraw/excalidraw/index";
 import React from "react";
 
@@ -8,6 +13,8 @@ import type { Theme } from "@excalidraw/element/types";
 
 import { LanguageList } from "../app-language/LanguageList";
 import { getCurrentUser, logout } from "../intranet/session";
+import { appJotaiStore } from "../app-jotai";
+import { saveToWorkspaceOpenAtom } from "../workspace/SaveToWorkspaceDialog";
 
 import { saveDebugState } from "./DebugCanvas";
 
@@ -15,13 +22,31 @@ export const AppMainMenu: React.FC<{
   onCollabDialogOpen: () => any;
   isCollaborating: boolean;
   isCollabEnabled: boolean;
+  isWorkspaceEnabled?: boolean;
+  isWorkspaceScene?: boolean;
   theme: Theme | "system";
   refresh: () => void;
 }> = React.memo((props) => {
   const currentUser = getCurrentUser();
   return (
     <MainMenu>
-      <MainMenu.DefaultItems.LoadScene />
+      {props.isWorkspaceEnabled && (
+        <>
+          <MainMenu.ItemLink icon={LibraryIcon} href="/">
+            Zur Übersicht
+          </MainMenu.ItemLink>
+          {!props.isWorkspaceScene && (
+            <MainMenu.Item
+              icon={ExportIcon}
+              onSelect={() => appJotaiStore.set(saveToWorkspaceOpenAtom, true)}
+            >
+              Im Workspace speichern…
+            </MainMenu.Item>
+          )}
+          <MainMenu.Separator />
+        </>
+      )}
+      {!props.isWorkspaceScene && <MainMenu.DefaultItems.LoadScene />}
       <MainMenu.DefaultItems.SaveToActiveFile />
       <MainMenu.DefaultItems.Export />
       <MainMenu.DefaultItems.SaveAsImage />
