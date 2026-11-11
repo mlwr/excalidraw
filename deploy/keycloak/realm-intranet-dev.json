@@ -1,0 +1,104 @@
+{
+  "realm": "intranet",
+  "displayName": "Intranet (Entwicklung)",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "roles": {
+    "client": {
+      "excalidraw": [
+        {
+          "name": "excalidraw-admin",
+          "description": "Administers Excalidraw"
+        },
+        {
+          "name": "excalidraw-user",
+          "description": "May use Excalidraw"
+        }
+      ]
+    }
+  },
+  "groups": [
+    {
+      "name": "IT",
+      "subGroups": [{ "name": "Architektur" }]
+    },
+    { "name": "Vertrieb" }
+  ],
+  "clients": [
+    {
+      "clientId": "excalidraw",
+      "name": "Excalidraw",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "dev-secret-change-me",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "redirectUris": ["http://localhost:3000/api/auth/callback"],
+      "webOrigins": ["http://localhost:3000"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/*",
+        "backchannel.logout.url": "http://localhost:3000/api/auth/backchannel-logout",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "true",
+            "claim.name": "groups",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.test",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "alice", "temporary": false }],
+      "clientRoles": {
+        "excalidraw": ["excalidraw-admin", "excalidraw-user"]
+      },
+      "groups": ["/IT/Architektur"]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@example.test",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Beispiel",
+      "credentials": [{ "type": "password", "value": "bob", "temporary": false }],
+      "clientRoles": { "excalidraw": ["excalidraw-user"] },
+      "groups": ["/Vertrieb"]
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "email": "carol@example.test",
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Ohnerolle",
+      "credentials": [{ "type": "password", "value": "carol", "temporary": false }]
+    }
+  ]
+}

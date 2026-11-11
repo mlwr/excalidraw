@@ -1,0 +1,10 @@
+apiVersion: v2
+name: excalidraw
+description: Self-hosted Excalidraw for the intranet with Keycloak SSO, server-side storage and realtime collaboration
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - excalidraw
+  - whiteboard
+  - keycloak

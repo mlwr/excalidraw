@@ -1,0 +1,216 @@
+{{- $fullname := include "excalidraw.fullname" . -}}
+{{- $secretName := include "excalidraw.secretName" . -}}
+{{- if not .Values.oidc.issuerUrl }}
+{{- fail "oidc.issuerUrl is required (e.g. https://sso.intranet.example/realms/company)" }}
+{{- end }}
+{{- if not (or .Values.oidc.clientSecret .Values.oidc.existingSecret) }}
+{{- fail "set oidc.clientSecret or oidc.existingSecret (confidential Keycloak client)" }}
+{{- end }}
+{{- if not (or .Values.database.url .Values.database.existingSecret .Values.postgresql.enabled) }}
+{{- fail "set database.url, database.existingSecret or postgresql.enabled" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "excalidraw.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "excalidraw.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "excalidraw.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "excalidraw.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: excalidraw
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PUBLIC_URL
+              value: {{ required "publicUrl is required" .Values.publicUrl | quote }}
+            - name: PORT
+              value: "8080"
+            - name: TRUST_PROXY
+              value: {{ .Values.trustProxy | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: OIDC_ISSUER_URL
+              value: {{ .Values.oidc.issuerUrl | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.oidc.existingSecret }}
+                  name: {{ .Values.oidc.existingSecret }}
+                  key: {{ .Values.oidc.existingSecretKey }}
+                  {{- else }}
+                  name: {{ $secretName }}
+                  key: oidc-client-secret
+                  {{- end }}
+            - name: OIDC_ADMIN_ROLE
+              value: {{ .Values.oidc.adminRole | quote }}
+            - name: OIDC_REQUIRED_ROLE
+              value: {{ .Values.oidc.requiredRole | quote }}
+            {{- with .Values.oidc.rolesClaims }}
+            - name: OIDC_ROLES_CLAIMS
+              value: {{ . | quote }}
+            {{- end }}
+            - name: OIDC_GROUPS_CLAIM
+              value: {{ .Values.oidc.groupsClaim | quote }}
+            - name: OIDC_SCOPES
+              value: {{ .Values.oidc.scopes | quote }}
+            {{- with .Values.oidc.postLogoutRedirectUrl }}
+            - name: OIDC_POST_LOGOUT_REDIRECT_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: SESSION_TTL_HOURS
+              value: {{ .Values.session.ttlHours | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.database.existingSecret }}
+                  name: {{ .Values.database.existingSecret }}
+                  key: {{ .Values.database.existingSecretKey }}
+                  {{- else }}
+                  name: {{ $secretName }}
+                  key: database-url
+                  {{- end }}
+            {{- if .Values.postgresql.enabled }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: postgres-password
+            {{- end }}
+            - name: DATABASE_POOL_SIZE
+              value: {{ .Values.database.poolSize | quote }}
+            - name: STORAGE_DRIVER
+              value: {{ .Values.storage.driver | quote }}
+            {{- if eq .Values.storage.driver "s3" }}
+            - name: S3_ENDPOINT
+              value: {{ required "storage.s3.endpoint is required" .Values.storage.s3.endpoint | quote }}
+            - name: S3_REGION
+              value: {{ .Values.storage.s3.region | quote }}
+            - name: S3_BUCKET
+              value: {{ required "storage.s3.bucket is required" .Values.storage.s3.bucket | quote }}
+            - name: S3_FORCE_PATH_STYLE
+              value: {{ .Values.storage.s3.forcePathStyle | quote }}
+            - name: S3_PREFIX
+              value: {{ .Values.storage.s3.prefix | quote }}
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.storage.s3.existingSecret | default $secretName }}
+                  key: s3-access-key-id
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.storage.s3.existingSecret | default $secretName }}
+                  key: s3-secret-access-key
+            {{- end }}
+            - name: MAX_FILE_SIZE_MB
+              value: {{ .Values.limits.maxFileSizeMb | quote }}
+            - name: MAX_SCENE_SIZE_MB
+              value: {{ .Values.limits.maxSceneSizeMb | quote }}
+            - name: MAX_SHARE_LINK_SIZE_MB
+              value: {{ .Values.limits.maxShareLinkSizeMb | quote }}
+            - name: MAX_IMAGE_DIMENSION
+              value: {{ .Values.limits.maxImageDimension | quote }}
+            - name: REALTIME_CLUSTER
+              value: {{ include "excalidraw.realtimeCluster" . | quote }}
+            - name: CSP_FRAME_SRC
+              value: {{ join " " .Values.csp.frameSrc | quote }}
+            - name: CSP_FRAME_ANCESTORS
+              value: {{ join " " .Values.csp.frameAncestors | quote }}
+            {{- if .Values.extraCaCerts.configMap }}
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/excalidraw/ca/{{ .Values.extraCaCerts.key }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.extraCaCerts.configMap }}
+            - name: ca-certs
+              mountPath: /etc/excalidraw/ca
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.extraCaCerts.configMap }}
+        - name: ca-certs
+          configMap:
+            name: {{ .Values.extraCaCerts.configMap }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,174 @@
+# Default values for the intranet Excalidraw deployment.
+# Values marked "required" have no usable default.
+
+image:
+  # required: where your CI pushes the image built from deploy/docker/Dockerfile
+  repository: registry.intranet.example/excalidraw-intranet
+  # defaults to the chart's appVersion
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+replicaCount: 2
+
+# required: external URL of the app, origin only (no path)
+publicUrl: "https://excalidraw.intranet.example"
+
+oidc:
+  # required: Keycloak realm URL, e.g. https://sso.intranet.example/realms/company
+  issuerUrl: ""
+  clientId: excalidraw
+  # client secret of the confidential Keycloak client: set it here or
+  # reference an existing secret (recommended)
+  clientSecret: ""
+  existingSecret: ""
+  existingSecretKey: oidc-client-secret
+  # Keycloak role that makes a user an Excalidraw admin
+  adminRole: excalidraw-admin
+  # Keycloak role a user needs to use Excalidraw at all; empty = everybody
+  requiredRole: ""
+  # claim paths with role lists; empty = realm roles + client roles
+  rolesClaims: ""
+  # claim with the group list (Keycloak "Group Membership" mapper)
+  groupsClaim: groups
+  scopes: "openid profile email"
+  # where Keycloak sends the browser after logout; empty = publicUrl
+  postLogoutRedirectUrl: ""
+
+session:
+  ttlHours: 10
+
+database:
+  # PostgreSQL connection string, e.g.
+  # postgres://excalidraw:secret@postgres.db.svc:5432/excalidraw?sslmode=require
+  url: ""
+  existingSecret: ""
+  existingSecretKey: database-url
+  poolSize: 10
+
+storage:
+  # "postgres" keeps images in the database, "s3" in an S3-compatible bucket
+  driver: postgres
+  s3:
+    endpoint: ""
+    region: us-east-1
+    bucket: ""
+    forcePathStyle: true
+    prefix: ""
+    accessKeyId: ""
+    secretAccessKey: ""
+    # secret with the keys s3-access-key-id and s3-secret-access-key
+    existingSecret: ""
+
+limits:
+  maxFileSizeMb: 25
+  maxSceneSizeMb: 50
+  maxShareLinkSizeMb: 50
+  # longest image side in pixels, 3840 = 4K
+  maxImageDimension: 3840
+
+realtime:
+  # share collaboration rooms across pods through PostgreSQL.
+  # "auto" enables it when more than one pod can run.
+  cluster: auto
+
+csp:
+  # extra origins whose pages may be embedded into drawings (embeddables)
+  frameSrc: []
+  # origins that may embed Excalidraw in an iframe (e.g. your wiki)
+  frameAncestors: []
+
+# trusted reverse proxy hops in front of the pods (the ingress controller)
+trustProxy: "1"
+logLevel: info
+
+# PEM bundle of your internal CA, used for TLS to Keycloak, S3 and PostgreSQL
+extraCaCerts:
+  configMap: ""
+  key: ca.crt
+
+extraEnv: []
+extraEnvFrom: []
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: ""
+  # empty = host of publicUrl
+  host: ""
+  annotations:
+    # ingress-nginx: uploads up to the scene limit, long-lived websockets
+    nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  tls:
+    enabled: true
+    secretName: excalidraw-tls
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+networkPolicy:
+  # restrict ingress to the ingress controller namespace
+  enabled: false
+  ingressControllerNamespace: ingress-nginx
+
+# Single-instance PostgreSQL for test environments only. Use a managed or
+# operator-run PostgreSQL (e.g. CloudNativePG) in production.
+postgresql:
+  enabled: false
+  image: postgres:16-alpine
+  database: excalidraw
+  username: excalidraw
+  # required when enabled
+  password: ""
+  storage: 10Gi
+  storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi

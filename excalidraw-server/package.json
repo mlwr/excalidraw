@@ -1,0 +1,37 @@
+{
+  "name": "excalidraw-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted backend for the intranet fork: Keycloak SSO, storage and realtime collaboration",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/server.mjs",
+    "migrate": "node dist/server.mjs migrate",
+    "test": "vitest run --config ./vitest.config.mts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.5",
+    "@fastify/rate-limit": "11.2.2",
+    "@fastify/static": "10.1.10",
+    "@socket.io/postgres-adapter": "0.5.0",
+    "aws4fetch": "1.0.20",
+    "fastify": "5.12.8",
+    "jose": "6.2.17",
+    "kysely": "0.29.8",
+    "openid-client": "6.8.9",
+    "pg": "8.23.1",
+    "socket.io": "4.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.13.10",
+    "@types/pg": "8.23.1",
+    "socket.io-client": "4.7.2",
+    "tsx": "4.23.15"
+  }
+}

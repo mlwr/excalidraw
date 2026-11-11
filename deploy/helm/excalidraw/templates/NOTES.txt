@@ -1,0 +1,15 @@
+Excalidraw is being deployed to {{ .Values.publicUrl }}
+
+Checklist for the Keycloak client "{{ .Values.oidc.clientId }}" in {{ .Values.oidc.issuerUrl }}:
+  - Client authentication: ON (confidential), Standard flow: ON
+  - Valid redirect URI:           {{ trimSuffix "/" .Values.publicUrl }}/api/auth/callback
+  - Valid post logout redirect:   {{ default .Values.publicUrl .Values.oidc.postLogoutRedirectUrl }}
+  - Backchannel logout URL:       {{ trimSuffix "/" .Values.publicUrl }}/api/auth/backchannel-logout
+  - Roles: {{ .Values.oidc.adminRole }}{{ with .Values.oidc.requiredRole }}, {{ . }}{{ end }}
+
+Realtime collaboration across pods: {{ include "excalidraw.realtimeCluster" . }}
+{{- if .Values.postgresql.enabled }}
+
+WARNING: postgresql.enabled=true runs a single, unreplicated database.
+Use it for test environments only.
+{{- end }}

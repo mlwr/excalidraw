@@ -1,0 +1,64 @@
+# Local development / evaluation stack:
+#   Excalidraw (app + server), PostgreSQL and a preconfigured Keycloak.
+#
+#   docker compose -f deploy/compose/docker-compose.yml up --build
+#
+# Then open http://localhost:3000 and log in as alice/alice (admin),
+# bob/bob (user) or carol/carol (no Excalidraw role).
+# Keycloak admin console: http://localhost:8080 (admin/admin).
+#
+# Excalidraw shares Keycloak's network namespace so that both the browser and
+# the server reach Keycloak as http://localhost:8080; the issuer URL in the
+# tokens then matches for both. Production deployments use one public
+# Keycloak URL instead (see deploy/helm).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: excalidraw
+      POSTGRES_USER: excalidraw
+      POSTGRES_PASSWORD: excalidraw
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "excalidraw"]
+      interval: 5s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: "8080"
+    volumes:
+      - ../keycloak/realm-intranet-dev.json:/opt/keycloak/data/import/realm-intranet-dev.json:ro
+    ports:
+      - "8080:8080" # Keycloak
+      - "3000:3000" # Excalidraw (shares this network namespace)
+
+  excalidraw:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    network_mode: "service:keycloak"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    environment:
+      PORT: "3000"
+      PUBLIC_URL: http://localhost:3000
+      DATABASE_URL: postgres://excalidraw:excalidraw@postgres:5432/excalidraw
+      OIDC_ISSUER_URL: http://localhost:8080/realms/intranet
+      OIDC_CLIENT_ID: excalidraw
+      OIDC_CLIENT_SECRET: dev-secret-change-me
+      OIDC_ALLOW_INSECURE_HTTP: "true"
+      OIDC_REQUIRED_ROLE: excalidraw-user
+      LOG_LEVEL: info
+
+volumes:
+  postgres-data:
