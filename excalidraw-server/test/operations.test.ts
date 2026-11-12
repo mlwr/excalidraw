@@ -768,6 +768,16 @@ describeWithDb("operations (phase 4)", () => {
       (await admin.app("POST", `/api/admin/users/${leaver.id}/enable`))
         .statusCode,
     ).toBe(400);
+    // events about the person lose the name too
+    const traces = await env.built.ctx.db
+      .selectFrom("events")
+      .select(["data", "target", "actor_name"])
+      .where((eb) =>
+        eb.or([eb("target", "=", leaver.id), eb("actor_id", "=", leaver.id)]),
+      )
+      .execute();
+    expect(traces.length).toBeGreaterThan(1);
+    expect(JSON.stringify(traces)).not.toContain("Carol");
 
     // audit log: filter by type prefix, page, and download as CSV
     await expect

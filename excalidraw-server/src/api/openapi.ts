@@ -536,5 +536,84 @@ export const openApiDocument = (config: Config) => ({
         responses: { "201": ok("Angelegt"), ...errors },
       },
     },
+    "/search": {
+      get: {
+        summary:
+          "Suche in Namen, Texten der Zeichnungen und Kommentaren (Wortanfänge, alle Wörter müssen vorkommen)",
+        parameters: [
+          {
+            name: "q",
+            in: "query",
+            required: true,
+            schema: { type: "string", minLength: 2 },
+          },
+          {
+            name: "workspace",
+            in: "query",
+            description: "ID oder Kurzname; ohne: alle Workspaces",
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": ok("Höchstens 50 Treffer mit Textausschnitt", {
+            type: "object",
+            properties: {
+              total: { type: "integer" },
+              results: {
+                type: "array",
+                items: {
+                  allOf: [
+                    ref("Scene"),
+                    {
+                      type: "object",
+                      properties: {
+                        snippet: {
+                          type: "object",
+                          nullable: true,
+                          properties: {
+                            kind: {
+                              type: "string",
+                              enum: ["drawing", "comment"],
+                            },
+                            text: { type: "string" },
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          }),
+          ...errors,
+        },
+      },
+    },
+    "/export": {
+      get: {
+        summary:
+          "ZIP mit allen sichtbaren Szenen eines Workspaces oder einer Collection (.excalidraw mit Bildern, manifest.json)",
+        parameters: [
+          {
+            name: "workspace",
+            in: "query",
+            description: "ID oder Kurzname; ohne: der allgemeine Workspace",
+            schema: { type: "string" },
+          },
+          { name: "collection", in: "query", schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "ZIP-Datei",
+            content: {
+              "application/zip": {
+                schema: { type: "string", format: "binary" },
+              },
+            },
+          },
+          ...errors,
+        },
+      },
+    },
   },
 });

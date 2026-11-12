@@ -768,6 +768,17 @@ export const registerAdminRoutes = (
           .set({ actor_name: ERASED_NAME, ip: null, user_agent: null })
           .where("actor_id", "=", user.id)
           .execute();
+        // the name in events about the person (locked, tokens ended, ...)
+        // and the username of refused logins
+        await sql`
+          update events set
+            data = case when data ? 'name'
+              then jsonb_set(data, '{name}', to_jsonb(${ERASED_NAME}::text))
+              else data end,
+            target = case when type = 'auth.login_denied' then null else target end
+          where target = ${user.id}
+            or (actor_id = ${user.id} and type = 'auth.login_denied')
+        `.execute(trx);
       });
       // sessions last: they would be gone with the person anyway
       const sessions = await db
