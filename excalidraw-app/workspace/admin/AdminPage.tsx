@@ -12,6 +12,7 @@ import { getCurrentUser } from "../../intranet/session";
 
 import { Avatar, Notice } from "../ui";
 
+import { AiSection } from "./AiSection";
 import { AuditSection } from "./AuditSection";
 import { BrandingSection } from "./BrandingSection";
 import { PeopleSection } from "./PeopleSection";
@@ -19,12 +20,13 @@ import { WorkspacesSection } from "./WorkspacesSection";
 
 import "./admin.scss";
 
-type Tab = "workspaces" | "people" | "audit" | "branding" | "figures";
+type Tab = "workspaces" | "people" | "audit" | "ai" | "branding" | "figures";
 
 const TABS: { id: Tab; label: string; appAdminOnly: boolean }[] = [
   { id: "workspaces", label: "Workspaces", appAdminOnly: false },
   { id: "people", label: "Personen", appAdminOnly: true },
   { id: "audit", label: "Audit-Log", appAdminOnly: true },
+  { id: "ai", label: "KI", appAdminOnly: true },
   { id: "branding", label: "Branding", appAdminOnly: true },
   { id: "figures", label: "Kennzahlen", appAdminOnly: true },
 ];
@@ -36,6 +38,7 @@ const DESCRIPTIONS: Record<Tab, string> = {
     "Konten sperren, API-Tokens beenden und Personen aus Datenschutzgründen entfernen.",
   audit:
     "Anmeldungen, Freigaben, Exporte und Verwaltungsaktionen, nachvollziehbar und als CSV.",
+  ai: "Text zu Diagramm und Wireframe zu Code mit eurem Sprachmodell: Freigabe, Tageslimit, Nutzung.",
   branding: "Name, Farbe, Logo und Links der App für alle.",
   figures: "Umfang und Wachstum der Installation.",
 };
@@ -212,6 +215,7 @@ export const AdminPage = () => {
           {current.id === "workspaces" && <WorkspacesSection />}
           {current.id === "people" && <PeopleSection />}
           {current.id === "audit" && <AuditSection />}
+          {current.id === "ai" && <AiSection />}
           {current.id === "branding" && <BrandingSection />}
           {current.id === "figures" && <FiguresSection />}
         </main>

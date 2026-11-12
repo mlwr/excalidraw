@@ -74,6 +74,8 @@ import type {
 import type { ResolutionType } from "@excalidraw/common/utility-types";
 import type { ResolvablePromise } from "@excalidraw/common/utils";
 
+import type { LibraryItems_anyVersion } from "@excalidraw/excalidraw/types";
+
 import CustomStats from "./CustomStats";
 import {
   Provider,
@@ -147,6 +149,10 @@ import { SceneShareDialog } from "./workspace/SceneShareDialog";
 import { CommentsButton } from "./workspace/comments/CommentsButton";
 import { CommentsLayer } from "./workspace/comments/CommentsLayer";
 import { VersionsDialog } from "./workspace/VersionsDialog";
+import {
+  createBrowserLibraryMigration,
+  ServerLibraryAdapter,
+} from "./intranet/libraryApi";
 
 import "./index.scss";
 
@@ -382,6 +388,19 @@ const initializeScene = async (opts: {
   return { scene: null, isExternalScene: false };
 };
 
+/** browser library (legacy localStorage first) into the server library */
+const browserLibraryMigration = createBrowserLibraryMigration(async () => {
+  const legacy = LibraryLocalStorageMigrationAdapter.load();
+  const stored = await LibraryIndexedDBAdapter.load();
+  // both lists are in the current format (or the old one); the library
+  // restores either when it merges them in
+  const libraryItems = [
+    ...(legacy?.libraryItems || []),
+    ...(stored?.libraryItems || []),
+  ] as LibraryItems_anyVersion;
+  return libraryItems.length ? { libraryItems } : null;
+});
+
 const ExcalidrawWrapper = () => {
   const excalidrawAPI = useExcalidrawAPI();
 
@@ -453,11 +472,17 @@ const ExcalidrawWrapper = () => {
     [userToFollow, collabAPI],
   );
 
+  // intranet fork: with an account the library lives on the server (L1);
+  // the browser's library moves there once
+  const libraryOnServer =
+    !!getCurrentUser() && getRuntimeConfig().workspace.enabled;
   useHandleLibrary({
     excalidrawAPI,
-    adapter: LibraryIndexedDBAdapter,
-    // TODO maybe remove this in several months (shipped: 24-03-11)
-    migrationAdapter: LibraryLocalStorageMigrationAdapter,
+    adapter: libraryOnServer ? ServerLibraryAdapter : LibraryIndexedDBAdapter,
+    migrationAdapter: libraryOnServer
+      ? browserLibraryMigration
+      : // TODO maybe remove this in several months (shipped: 24-03-11)
+        LibraryLocalStorageMigrationAdapter,
   });
 
   const [, forceRefresh] = useState(false);
@@ -630,13 +655,15 @@ const ExcalidrawWrapper = () => {
             ...localDataState,
             captureUpdate: CaptureUpdateAction.NEVER,
           });
-          LibraryIndexedDBAdapter.load().then((data) => {
-            if (data) {
-              excalidrawAPI.updateLibrary({
-                libraryItems: data.libraryItems,
-              });
-            }
-          });
+          if (!getCurrentUser() || !getRuntimeConfig().workspace.enabled) {
+            LibraryIndexedDBAdapter.load().then((data) => {
+              if (data) {
+                excalidrawAPI.updateLibrary({
+                  libraryItems: data.libraryItems,
+                });
+              }
+            });
+          }
           collabAPI?.setUsername(getCurrentUser()?.name || username || "");
         }
 
@@ -1024,7 +1051,10 @@ const ExcalidrawWrapper = () => {
           showEncryptionHint={!activeScene}
         />
         {excalidrawAPI && isAIEnabled && (
-          <AIComponents excalidrawAPI={excalidrawAPI} />
+          <AIComponents
+            excalidrawAPI={excalidrawAPI}
+            diagramToCode={!!getRuntimeConfig().ai.diagramToCode}
+          />
         )}
 
         {isAIEnabled && <TTDDialogTrigger />}
@@ -1077,7 +1107,10 @@ const ExcalidrawWrapper = () => {
 
         {isWorkspaceEnabled && !activeScene && <SaveToWorkspaceDialog />}
 
-        <AppSidebar />
+        <AppSidebar
+          excalidrawAPI={excalidrawAPI}
+          withTeamLibraries={isWorkspaceEnabled}
+        />
 
         {errorMessage && (
           <ErrorDialog onClose={() => setErrorMessage("")}>

@@ -331,7 +331,11 @@ export const registerAuth = (app: FastifyInstance, ctx: AppContext) => {
     }
     return {
       user: publicUser(request.auth.user),
-      config: clientConfig(config),
+      config: {
+        ...clientConfig(config),
+        // what this person may use
+        ai: await ctx.ai.statusFor(request.auth.user),
+      },
     };
   });
 

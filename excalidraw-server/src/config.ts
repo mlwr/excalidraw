@@ -116,6 +116,36 @@ export interface Config {
   };
   /** port for Prometheus metrics, not exposed via the ingress; 0 = off */
   metricsPort: number;
+  /** AI through the company's own language model (K1, K2) */
+  ai: {
+    /** OpenAI-compatible endpoint, e.g. http://vllm.ki.svc:8000/v1; null = no AI */
+    baseUrl: URL | null;
+    apiKey: string | null;
+    /** model for text to diagram */
+    model: string | null;
+    /** model that understands images, for wireframe to code; null = off */
+    visionModel: string | null;
+    maxTokens: number;
+    timeoutMs: number;
+    /** requests per person and day (admins can change it) */
+    dailyLimit: number;
+    /** role needed for AI; null = everyone (admins can change it) */
+    requiredRole: string | null;
+  };
+  /** e-mail through the internal relay (Z3); null = in-app only */
+  smtp: {
+    host: string;
+    port: number;
+    /** TLS from the start (port 465); otherwise STARTTLS if offered */
+    secure: boolean;
+    user: string | null;
+    password: string | null;
+    from: string;
+  } | null;
+  /** minutes an unread notification waits before it is e-mailed */
+  notifyEmailDelayMinutes: number;
+  /** pages that may embed scenes (T3): CSP frame-ancestors of /embed */
+  embedFrameAncestors: string[];
   logLevel: string;
 }
 
@@ -414,6 +444,88 @@ export const loadConfig = (env: Env = process.env): Config => {
     search: {
       content: parseBool(env.SEARCH_CONTENT, true),
     },
+    ai: (() => {
+      const raw = env.AI_BASE_URL?.trim();
+      let baseUrl: URL | null = null;
+      if (raw) {
+        try {
+          baseUrl = new URL(raw.replace(/\/+$/, ""));
+          if (!["http:", "https:"].includes(baseUrl.protocol)) {
+            throw new Error("protocol");
+          }
+        } catch {
+          errors.push(`AI_BASE_URL must be an http(s) URL (got "${raw}")`);
+          baseUrl = null;
+        }
+      }
+      const model = env.AI_MODEL?.trim() || null;
+      if (baseUrl && !model) {
+        errors.push("AI_MODEL is required with AI_BASE_URL");
+      }
+      return {
+        baseUrl,
+        apiKey: env.AI_API_KEY?.trim() || null,
+        model,
+        visionModel: env.AI_VISION_MODEL?.trim() || null,
+        maxTokens: Math.round(
+          parseNumber("AI_MAX_TOKENS", env.AI_MAX_TOKENS, 4096, errors),
+        ),
+        timeoutMs:
+          Math.round(
+            parseNumber(
+              "AI_TIMEOUT_SECONDS",
+              env.AI_TIMEOUT_SECONDS,
+              180,
+              errors,
+            ),
+          ) * 1000,
+        dailyLimit: Math.round(
+          parseNumber("AI_DAILY_LIMIT", env.AI_DAILY_LIMIT, 50, errors),
+        ),
+        requiredRole: env.AI_REQUIRED_ROLE?.trim() || null,
+      };
+    })(),
+    smtp: (() => {
+      const host = env.SMTP_HOST?.trim();
+      if (!host) {
+        return null;
+      }
+      const from = env.SMTP_FROM?.trim();
+      if (!from) {
+        errors.push("SMTP_FROM is required with SMTP_HOST");
+      }
+      const secure = parseBool(env.SMTP_SECURE, false);
+      return {
+        host,
+        port: Math.round(
+          parseNumber("SMTP_PORT", env.SMTP_PORT, secure ? 465 : 25, errors),
+        ),
+        secure,
+        user: env.SMTP_USER?.trim() || null,
+        password: env.SMTP_PASSWORD || null,
+        from: from || "",
+      };
+    })(),
+    notifyEmailDelayMinutes: (() => {
+      const value = env.NOTIFY_EMAIL_DELAY_MINUTES;
+      if (value !== undefined && value.trim() === "0") {
+        return 0;
+      }
+      return Math.round(
+        parseNumber("NOTIFY_EMAIL_DELAY_MINUTES", value, 10, errors),
+      );
+    })(),
+    embedFrameAncestors: env.EMBED_FRAME_ANCESTORS
+      ? splitList(env.EMBED_FRAME_ANCESTORS)
+      : publicUrl
+      ? // the intranet around the app: https://*.<parent domain>
+        [
+          `${publicUrl.protocol}//*.${publicUrl.hostname
+            .split(".")
+            .slice(1)
+            .join(".")}`,
+        ].filter((origin) => !origin.endsWith("*."))
+      : [],
     metricsPort:
       env.METRICS_PORT !== undefined && env.METRICS_PORT.trim() === "0"
         ? 0

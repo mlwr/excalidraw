@@ -30,6 +30,8 @@ import { createMetrics } from "./metrics.js";
 import { createLifecycle } from "./workspace/lifecycle.js";
 import { createSearch } from "./workspace/search.js";
 import { registerAdminRoutes } from "./admin/routes.js";
+import { registerAiRoutes } from "./ai/routes.js";
+import { createAi } from "./ai/service.js";
 import { registerMcp } from "./mcp/server.js";
 import { createCommentService } from "./workspace/comments.js";
 import { createWorkspaceService } from "./workspace/service.js";
@@ -38,6 +40,7 @@ import {
   registerDiscoveryRoutes,
 } from "./workspace/discovery.js";
 import { registerHistoryRoutes } from "./workspace/history.js";
+import { registerLibraryRoutes } from "./workspace/libraries.js";
 
 import type { Config } from "./config.js";
 import type { AppContext, RealtimeHooks } from "./context.js";
@@ -120,6 +123,7 @@ export const buildApp = async (
     },
   } as AppContext;
   ctx.lifecycle = createLifecycle(ctx);
+  ctx.ai = createAi(ctx);
   ctx.search = createSearch(ctx);
 
   await app.register(fastifyCookie);
@@ -215,6 +219,10 @@ export const buildApp = async (
   registerHistoryRoutes(app, ctx, workspace, requireAuth);
   registerDiscoveryRoutes(app, ctx, discovery, requireAuth);
   registerAdminRoutes(app, ctx, requireAuth);
+
+  // Phase 5: AI with the company's language model, libraries
+  registerAiRoutes(app, ctx, requireAuth);
+  registerLibraryRoutes(app, ctx, requireAuth);
   if (config.api.enabled) {
     const requireToken = createRequireToken(new TokenStore(ctx.db, config));
     registerTokenRoutes(app, ctx, requireAuth);

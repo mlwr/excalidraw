@@ -20,8 +20,11 @@ import { TTDIndexedDBAdapter } from "../data/TTDStorage";
 
 export const AIComponents = ({
   excalidrawAPI,
+  diagramToCode = true,
 }: {
   excalidrawAPI: ExcalidrawImperativeAPI;
+  /** a model that reads images is available */
+  diagramToCode?: boolean;
 }) => {
   useOnExcalidrawStateChange(
     (appState) => appState.openDialog?.name === "ttd",
@@ -36,6 +39,11 @@ export const AIComponents = ({
     <>
       <DiagramToCodePlugin
         generate={async ({ frame, children, onPartial }) => {
+          if (!diagramToCode) {
+            throw new Error(
+              "Für „Wireframe zu Code“ ist kein Sprachmodell mit Bildverständnis eingerichtet.",
+            );
+          }
           const appState = excalidrawAPI.getAppState();
 
           // SAFETY: This should never happen, but log it just in case
@@ -62,10 +70,9 @@ export const AIComponents = ({
 
           const textFromFrameChildren = getTextFromElements(children);
 
+          // intranet fork: the company's language model, via our server
           const response = await fetch(
-            `${
-              import.meta.env.VITE_APP_AI_BACKEND
-            }/v1/ai/diagram-to-code/generate-streaming`,
+            "/api/ai/diagram-to-code/generate-streaming",
             {
               method: "POST",
               headers: {
@@ -165,9 +172,8 @@ export const AIComponents = ({
           const { onChunk, onStreamCreated, signal, messages } = props;
 
           const result = await TTDStreamFetch({
-            url: `${
-              import.meta.env.VITE_APP_AI_BACKEND
-            }/v1/ai/text-to-diagram/chat-streaming`,
+            // intranet fork: the company's language model, via our server
+            url: "/api/ai/text-to-diagram/chat-streaming",
             messages,
             onChunk,
             onStreamCreated,

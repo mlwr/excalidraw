@@ -55,6 +55,27 @@ export interface AuditEvent {
   user_agent: string | null;
 }
 
+export interface AiSettings {
+  enabled: boolean;
+  dailyLimit: number;
+  requiredRole: string | null;
+}
+
+export interface AiOverview {
+  configured: boolean;
+  endpoint: string | null;
+  model: string | null;
+  visionModel: string | null;
+  settings: AiSettings;
+  usage: {
+    day: string;
+    requests: number;
+    people: number;
+    promptTokens: number;
+    completionTokens: number;
+  }[];
+}
+
 export interface AuditFilter {
   type?: string;
   actor?: string;
@@ -189,6 +210,13 @@ export const adminApi = {
 
   removeLogo: async () =>
     json<Branding>(await send("DELETE", "/api/admin/branding/logo")),
+
+  ai: async () => json<AiOverview>(await backendFetch("/api/admin/ai")),
+
+  saveAi: async (settings: Partial<AiSettings>) =>
+    json<{ settings: AiSettings }>(
+      await send("PUT", "/api/admin/ai", settings),
+    ),
 
   stats: async () =>
     json<Record<string, unknown>>(await backendFetch("/api/admin/stats")),

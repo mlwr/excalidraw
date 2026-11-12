@@ -165,6 +165,12 @@ export const createLifecycle = (ctx: AppContext) => {
     await sql`delete from events where at < now() - make_interval(days => ${auditDays})`.execute(
       db,
     );
+    await sql`delete from ai_usage where day < current_date - ${auditDays}::int`.execute(
+      db,
+    );
+    await sql`delete from notifications where created_at < now() - interval '90 days'`.execute(
+      db,
+    );
     await sql`delete from scene_visits where visited_at < now() - make_interval(days => ${visitDays})`.execute(
       db,
     );

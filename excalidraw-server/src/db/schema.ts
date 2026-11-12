@@ -173,6 +173,8 @@ export interface ScenesTable {
     Date | string | null
   >;
   read_link_token: string | null;
+  /** token of the embedding link (T3) */
+  embed_token: string | null;
   deleted_by: string | null;
 }
 
@@ -323,6 +325,81 @@ export interface SettingsTable {
   updated_by: string | null;
 }
 
+export interface AiUsageTable {
+  user_id: string;
+  /** yyyy-mm-dd */
+  day: ColumnType<string, string, string>;
+  feature: string;
+  requests: ColumnType<number, number | undefined, number>;
+  prompt_tokens: ColumnType<
+    string,
+    number | string | undefined,
+    number | string
+  >;
+  completion_tokens: ColumnType<
+    string,
+    number | string | undefined,
+    number | string
+  >;
+}
+
+export type LibraryKind = "personal" | "collection" | "workspace";
+
+export interface LibrariesTable {
+  id: Generated<string>;
+  kind: LibraryKind;
+  owner_id: string | null;
+  collection_id: string | null;
+  workspace_id: string | null;
+  name: string;
+  key_sealed: Buffer;
+  /** encrypted JSON list of library items */
+  content: Buffer | null;
+  items: ColumnType<number, number | undefined, number>;
+  size: ColumnType<number, number | undefined, number>;
+  revision: ColumnType<string, number | string | undefined, number | string>;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface NotificationsTable {
+  id: Generated<string>;
+  user_id: string;
+  type: string;
+  actor_id: string | null;
+  scene_id: string | null;
+  collection_id: string | null;
+  thread_id: string | null;
+  data: ColumnType<
+    Record<string, unknown>,
+    Record<string, unknown> | string | undefined,
+    Record<string, unknown> | string
+  >;
+  created_at: Timestamp;
+  read_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+  email_state: ColumnType<
+    "none" | "pending" | "sent" | "failed",
+    "none" | "pending" | "sent" | "failed" | undefined,
+    "none" | "pending" | "sent" | "failed"
+  >;
+}
+
+export interface UserPreferencesTable {
+  user_id: string;
+  preferences: ColumnType<
+    Record<string, unknown>,
+    Record<string, unknown> | string | undefined,
+    Record<string, unknown> | string
+  >;
+  updated_at: Timestamp;
+}
+
 export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
@@ -345,6 +422,10 @@ export interface Database {
   scene_search: SceneSearchTable;
   events: EventsTable;
   settings: SettingsTable;
+  ai_usage: AiUsageTable;
+  libraries: LibrariesTable;
+  notifications: NotificationsTable;
+  user_preferences: UserPreferencesTable;
 }
 
 export type User = Selectable<UsersTable>;

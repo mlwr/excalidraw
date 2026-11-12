@@ -18,7 +18,8 @@ export interface IntranetUser {
 export interface RuntimeConfig {
   maxFileSizeBytes: number;
   maxImageDimension: number;
-  ai: { enabled: boolean };
+  /** AI through the company's language model, as far as this person may */
+  ai: { enabled: boolean; diagramToCode?: boolean; dailyLimit?: number };
   libraries: { browseUrl: string | null };
   workspace: { enabled: boolean };
   /** REST API and MCP server with personal API tokens */

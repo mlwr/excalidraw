@@ -7,6 +7,7 @@ import type { BlobStore } from "./storage/index.js";
 import type { EventLog } from "./events.js";
 import type { Lifecycle } from "./workspace/lifecycle.js";
 import type { Search } from "./workspace/search.js";
+import type { Ai } from "./ai/service.js";
 import type { Kysely } from "kysely";
 
 export interface RealtimeHooks {
@@ -50,6 +51,8 @@ export interface AppContext {
   lifecycle: Lifecycle;
   /** search index */
   search: Search;
+  /** AI with the company's language model */
+  ai: Ai;
 }
 
 declare module "fastify" {

@@ -10,6 +10,7 @@ import type {
   Grant,
   SceneSummary,
 } from "../intranet/workspaceApi";
+import type { ReactNode } from "react";
 
 /** asks for a name (new collection, rename) */
 export const NameDialog = ({
@@ -19,6 +20,7 @@ export const NameDialog = ({
   submitLabel,
   onSubmit,
   onClose,
+  extra,
 }: {
   title: string;
   label: string;
@@ -26,6 +28,8 @@ export const NameDialog = ({
   submitLabel: string;
   onSubmit: (name: string) => Promise<void>;
   onClose: () => void;
+  /** more fields below the name */
+  extra?: ReactNode;
 }) => {
   const [name, setName] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -70,6 +74,7 @@ export const NameDialog = ({
           onKeyDown={(event) => event.key === "Enter" && submit()}
         />
       </label>
+      {extra}
       {error && <Notice kind="error">{error}</Notice>}
     </Dialog>
   );

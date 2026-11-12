@@ -727,6 +727,18 @@ export const registerAdminRoutes = (
             .where("principal", "=", user.id)
             .execute();
         }
+        for (const table of [
+          "ai_usage",
+          "notifications",
+          "user_preferences",
+        ] as const) {
+          await trx.deleteFrom(table).where("user_id", "=", user.id).execute();
+        }
+        await trx
+          .deleteFrom("libraries")
+          .where("kind", "=", "personal")
+          .where("owner_id", "=", user.id)
+          .execute();
         await trx
           .deleteFrom("scene_visits")
           .where("user_id", "=", user.id)
@@ -1104,6 +1116,71 @@ export const registerAdminRoutes = (
     const next = { ...(await branding()), logo: null };
     await saveBranding(next, request.auth!.user.id);
     return next;
+  });
+
+  // --- AI (K2) ------------------------------------------------------------------------
+
+  app.get("/api/admin/ai", options, async (request, reply) => {
+    requireAppAdmin(request);
+    reply.header("cache-control", "no-store");
+    return {
+      configured: ctx.ai.configured,
+      endpoint: config.ai.baseUrl?.host ?? null,
+      model: config.ai.model,
+      visionModel: config.ai.visionModel,
+      settings: await ctx.ai.settings(),
+      usage: await ctx.ai.usageByDay(30),
+    };
+  });
+
+  app.put("/api/admin/ai", options, async (request) => {
+    requireAppAdmin(request);
+    const input = body(request);
+    const next = { ...(await ctx.ai.settings()) };
+    if (input.enabled !== undefined) {
+      if (typeof input.enabled !== "boolean") {
+        throw new HttpError(400, "invalid_input", "enabled: true oder false.");
+      }
+      next.enabled = input.enabled;
+    }
+    if (input.dailyLimit !== undefined) {
+      if (
+        typeof input.dailyLimit !== "number" ||
+        !Number.isInteger(input.dailyLimit) ||
+        input.dailyLimit < 0 ||
+        input.dailyLimit > 10_000
+      ) {
+        throw new HttpError(
+          400,
+          "invalid_input",
+          "dailyLimit: ganze Zahl von 0 bis 10 000.",
+        );
+      }
+      next.dailyLimit = input.dailyLimit;
+    }
+    if (input.requiredRole !== undefined) {
+      const role = input.requiredRole;
+      if (
+        role !== null &&
+        role !== "" &&
+        (typeof role !== "string" || !/^[\w.:/-]{1,100}$/.test(role))
+      ) {
+        throw new HttpError(
+          400,
+          "invalid_input",
+          "requiredRole: Name einer Rolle.",
+        );
+      }
+      next.requiredRole = (role as string | null) || null;
+    }
+    await ctx.ai.saveSettings(next, request.auth!.user.id);
+    ctx.events.record({
+      type: "admin.ai_settings",
+      actor: request.auth!.user,
+      request,
+      data: { ...next },
+    });
+    return { settings: next };
   });
 
   // --- figures for the operators (B7) ------------------------------------------------

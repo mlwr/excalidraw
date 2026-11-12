@@ -3,13 +3,13 @@
  * - search over all scenes of a workspace (W6): names, texts, comments
  * - export as a ZIP of .excalidraw files with their images (W9)
  */
-import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { PassThrough } from "node:stream";
 
 import { Zip, ZipDeflate } from "fflate";
 
 import { HttpError } from "../util/http.js";
+import { perSession as perSessionLimit } from "../util/rateLimit.js";
 import { queryParam, searchText } from "../util/validate.js";
 
 import { actorOf } from "./access.js";
@@ -260,19 +260,8 @@ export const registerDiscoveryRoutes = (
   const { db, config } = ctx;
   const actor = (request: FastifyRequest) => actorOf(request.auth!.user);
 
-  /** requests per minute and session (not per address: many share one) */
-  const perSession = (name: string, max: number) => ({
-    rateLimit: {
-      max,
-      timeWindow: "1 minute",
-      keyGenerator: (request: FastifyRequest) => {
-        const session = request.cookies?.[config.session.cookieName];
-        return session
-          ? `${name}:${createHash("sha256").update(session).digest("hex")}`
-          : request.ip;
-      },
-    },
-  });
+  const perSession = (name: string, max: number) =>
+    perSessionLimit(config.session.cookieName, name, max);
 
   app.get(
     "/api/search",

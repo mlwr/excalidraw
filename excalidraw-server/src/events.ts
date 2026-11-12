@@ -51,7 +51,11 @@ export type EventType =
   | "admin.user_erased"
   | "admin.tokens_revoked"
   | "admin.branding"
-  | "admin.audit_exported";
+  | "admin.audit_exported"
+  | "admin.ai_settings"
+  | "share.embed_created"
+  | "share.embed_deleted"
+  | "library.changed";
 
 /** what the activity feed shows */
 export const FEED_TYPES: EventType[] = [

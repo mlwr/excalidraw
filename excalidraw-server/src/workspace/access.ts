@@ -117,6 +117,7 @@ export const SCENE_META_COLUMNS = [
   "key_sealed",
   "thumbnail_updated_at",
   "read_link_token",
+  "embed_token",
   "deleted_by",
 ] as const;
 
