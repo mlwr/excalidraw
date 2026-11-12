@@ -183,7 +183,7 @@ class Portal {
   };
 
   /** intranet fork: take or give up the spotlight (Z4) */
-  broadcastSpotlight = (active: boolean) => {
+  broadcastSpotlight = (active: boolean, since: number) => {
     if (this.socket?.id) {
       const data: SocketUpdateDataSource["SPOTLIGHT"] = {
         type: WS_SUBTYPES.SPOTLIGHT,
@@ -191,6 +191,7 @@ class Portal {
           socketId: this.socket.id as SocketId,
           username: this.collab.state.username,
           active,
+          since,
         },
       };
       return this._broadcastSocketData(data as SocketUpdateData);

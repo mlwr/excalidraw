@@ -1,6 +1,10 @@
 /**
  * Embedding scenes in wiki and intranet pages (T3).
  */
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { afterEach, expect, it } from "vitest";
 
 import {
@@ -149,5 +153,50 @@ describeWithDb("embedding", () => {
       404,
     );
     expect((await anonymous("/api/embed/kurz")).statusCode).toBe(404);
+  });
+  it("lets intranet pages frame embedding links and nothing else", async () => {
+    const staticDir = await mkdtemp(path.join(tmpdir(), "excalidraw-static-"));
+    await writeFile(
+      path.join(staticDir, "index.html"),
+      '<!doctype html><html><head><script>window.x=1</script></head><body><div id="root"></div></body></html>',
+    );
+    try {
+      env = await createTestEnv({
+        STATIC_DIR: staticDir,
+        EMBED_FRAME_ANCESTORS: "https://wiki.intranet.example",
+      });
+      const framing = async (url: string) => {
+        const page = await anonymous(url);
+        expect(page.statusCode).toBe(200);
+        return {
+          ancestors: /frame-ancestors [^;]*/.exec(
+            String(page.headers["content-security-policy"]),
+          )?.[0],
+          xfo: page.headers["x-frame-options"],
+        };
+      };
+      const token = "A".repeat(32);
+      for (const url of [`/embed/${token}`, `/embed/${token}?x=1`]) {
+        expect(await framing(url)).toEqual({
+          ancestors: "frame-ancestors 'self' https://wiki.intranet.example",
+          xfo: undefined,
+        });
+      }
+      // everything else stays out of frames, also below /embed
+      for (const url of [
+        "/",
+        "/s/abcdefgh",
+        "/embed/x",
+        "/embed/x?w=hr&c=123",
+        `/embed/${token}/more`,
+        "/embed-login",
+      ]) {
+        const result = await framing(url);
+        expect(result.ancestors).toBe("frame-ancestors 'self'");
+        expect(result.xfo).toBe("SAMEORIGIN");
+      }
+    } finally {
+      await rm(staticDir, { recursive: true, force: true });
+    }
   });
 });

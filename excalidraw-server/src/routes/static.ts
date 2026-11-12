@@ -34,6 +34,9 @@ const inlineScriptHashes = (html: string): string[] => {
   return hashes;
 };
 
+/** an embedding link (T3): the only page of the app intranet pages may frame */
+export const EMBED_PATH_RE = /^\/embed\/[A-Za-z0-9_-]{16,64}\/?$/;
+
 export const buildContentSecurityPolicy = (
   config: Config,
   scriptHashes: string[],
@@ -147,6 +150,8 @@ export const registerStatic = async (app: FastifyInstance, config: Config) => {
         .header("cache-control", "no-store")
         .send({ error: "not_found", message: "not_found" });
     }
-    return sendIndexHtml(reply, request.url.startsWith("/embed/"));
+    // only a real embedding link may be framed, nothing else of the app
+    const pathname = request.url.split("?")[0];
+    return sendIndexHtml(reply, EMBED_PATH_RE.test(pathname));
   });
 };

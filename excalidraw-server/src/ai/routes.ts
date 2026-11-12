@@ -85,7 +85,7 @@ export const registerAiRoutes = (
     messages: LlmMessage[],
   ) => {
     const user = request.auth!.user;
-    let admitted: { limit: number; remaining: number };
+    let admitted: { limit: number; remaining: number; day: string };
     try {
       admitted = await ai.admit(user, feature);
     } catch (error) {
@@ -102,7 +102,7 @@ export const registerAiRoutes = (
     const controller = new AbortController();
     reply.raw.once("close", () => controller.abort());
     const answer = ai
-      .generate(user, feature, messages, controller.signal)
+      .generate(user, feature, admitted.day, messages, controller.signal)
       [Symbol.asyncIterator]();
 
     // errors before the first words become a proper HTTP error
@@ -110,6 +110,10 @@ export const registerAiRoutes = (
     try {
       first = await answer.next();
     } catch (error) {
+      if (controller.signal.aborted) {
+        // the person closed the dialog: nobody waits for an answer
+        return refuse(reply, 499, "Abgebrochen.");
+      }
       if (error instanceof LlmError) {
         request.log.warn({ status: error.status }, "AI request failed");
         return refuse(reply, error.status, error.message);
@@ -131,7 +135,13 @@ export const registerAiRoutes = (
         send({ type: "done", finishReason: "stop" });
       } catch (error) {
         if (!controller.signal.aborted) {
-          request.log.warn({ err: error }, "AI answer broke off");
+          // only the status: texts of the model's server may echo the input
+          request.log.warn(
+            error instanceof LlmError
+              ? { status: error.status }
+              : { err: error },
+            "AI answer broke off",
+          );
           send({
             type: "error",
             error: {

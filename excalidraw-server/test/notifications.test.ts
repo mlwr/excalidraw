@@ -2,6 +2,7 @@
  * Notifications (Z3): mentions, replies and shares, in the app and by
  * e-mail through the company's SMTP relay.
  */
+import { sql } from "kysely";
 import { afterEach, expect, it } from "vitest";
 
 import { startFakeSmtp } from "./helpers/fakeSmtp.js";
@@ -66,6 +67,7 @@ describeWithDb("notifications", () => {
           read: boolean;
           sceneId: string | null;
           threadId: string | null;
+          available: boolean;
         }[];
       };
     return { app, id: me.id as string, notifications };
@@ -242,5 +244,116 @@ describeWithDb("notifications", () => {
       .toBe(1);
     await env.built.jobs.run("emails");
     expect(smtp.mails).toHaveLength(1);
+  });
+  it("shows and mails only what people may still see", async () => {
+    smtp = await startFakeSmtp();
+    env = await createTestEnv({
+      SMTP_HOST: "127.0.0.1",
+      SMTP_PORT: String(smtp.port),
+      SMTP_FROM: "excalidraw@intranet.example",
+      NOTIFY_EMAIL_DELAY_MINUTES: "0",
+    });
+    const owner = await person(bob);
+    const colleague = await person(carol);
+    const shareWith = async (name: string) => {
+      const scene = (await owner.app("POST", "/api/scenes", { name })).json()
+        .scene;
+      await owner.app("PUT", `/api/scenes/${scene.id}/grants`, {
+        grants: [{ type: "user", principal: colleague.id, role: "viewer" }],
+      });
+      return scene;
+    };
+    const revoked = await shareWith("Harmlos");
+    const kept = await shareWith("Entwurf");
+    await expect
+      .poll(async () => (await colleague.notifications()).unread)
+      .toBe(2);
+
+    // taken back, then renamed: the old name only, and not available
+    await owner.app("PUT", `/api/scenes/${revoked.id}/grants`, { grants: [] });
+    await owner.app("PATCH", `/api/scenes/${revoked.id}`, {
+      name: "Stellenabbau Q3",
+    });
+    // still shared and renamed: the current name
+    await owner.app("PATCH", `/api/scenes/${kept.id}`, { name: "Final" });
+    const list = (await colleague.notifications()).notifications;
+    expect(list.map((item) => [item.text, item.available])).toEqual([
+      ["Bob Beispiel hat „Final“ mit dir geteilt", true],
+      ["Bob Beispiel hat „Harmlos“ mit dir geteilt", false],
+    ]);
+    expect(JSON.stringify(list)).not.toContain("Stellenabbau");
+
+    // the mail names only what is still shared
+    await env.built.jobs.run("emails");
+    expect(smtp.mails).toHaveLength(1);
+    const text = decodeQuotedPrintable(smtp.mails[0].data);
+    expect(text).toContain("„Final“");
+    expect(text).not.toContain("Harmlos");
+    expect(text).not.toContain("Stellenabbau");
+    const states = await env.built.ctx.db
+      .selectFrom("notifications")
+      .select(["scene_id", "email_state"])
+      .execute();
+    expect(
+      Object.fromEntries(states.map((row) => [row.scene_id, row.email_state])),
+    ).toEqual({ [revoked.id]: "none", [kept.id]: "sent" });
+  });
+
+  it("keeps e-mails while the relay is away", async () => {
+    // a port nobody listens on (for now)
+    const gone = await startFakeSmtp();
+    const port = gone.port;
+    await gone.close();
+    env = await createTestEnv({
+      SMTP_HOST: "127.0.0.1",
+      SMTP_PORT: String(port),
+      SMTP_FROM: "excalidraw@intranet.example",
+      NOTIFY_EMAIL_DELAY_MINUTES: "0",
+    });
+    const owner = await person(bob);
+    const colleague = await person(carol);
+    for (const name of ["Eins", "Zwei"]) {
+      const scene = (await owner.app("POST", "/api/scenes", { name })).json()
+        .scene;
+      await owner.app("PUT", `/api/scenes/${scene.id}/grants`, {
+        grants: [{ type: "user", principal: colleague.id, role: "viewer" }],
+      });
+    }
+    await expect
+      .poll(async () => (await colleague.notifications()).unread)
+      .toBe(2);
+    const states = async () =>
+      (
+        await env.built.ctx.db
+          .selectFrom("notifications")
+          .select("email_state")
+          .execute()
+      ).map((row) => row.email_state);
+
+    await env.built.jobs.run("emails");
+    expect(await states()).toEqual(["pending", "pending"]);
+
+    // back again: sent in the next run
+    smtp = await startFakeSmtp(port);
+    await env.built.jobs.run("emails");
+    expect(smtp.mails).toHaveLength(1);
+    expect(await states()).toEqual(["sent", "sent"]);
+
+    // a person who left in the meantime gets nothing
+    const third = (
+      await owner.app("POST", "/api/scenes", { name: "Drei" })
+    ).json().scene;
+    await owner.app("PUT", `/api/scenes/${third.id}/grants`, {
+      grants: [{ type: "user", principal: colleague.id, role: "viewer" }],
+    });
+    await expect
+      .poll(async () => (await colleague.notifications()).unread)
+      .toBe(3);
+    await sql`update users set disabled_at = now() where id = ${colleague.id}`.execute(
+      env.built.ctx.db,
+    );
+    await env.built.jobs.run("emails");
+    expect(smtp.mails).toHaveLength(1);
+    expect((await states()).sort()).toEqual(["none", "sent", "sent"]);
   });
 });

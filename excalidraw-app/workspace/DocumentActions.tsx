@@ -78,6 +78,11 @@ export const DocumentActions = ({
           .then(({ importPdf }) =>
             importPdf(excalidrawAPI, file, {
               maxImageDimension: getMaxImageDimension(),
+              onProgress: (page, pages) =>
+                pages > 1 &&
+                excalidrawAPI.setToast({
+                  message: `„${file.name}“: Seite ${page} von ${pages} …`,
+                }),
             }),
           )
           .then(({ pages, total }) =>

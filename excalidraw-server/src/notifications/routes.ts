@@ -27,7 +27,7 @@ export const registerNotificationRoutes = (
       );
     }
     reply.header("cache-control", "no-store");
-    return notifications.list(request.auth!.user.id, before);
+    return notifications.list(request.auth!.user, before);
   });
 
   app.get("/api/notifications/unread", options, async (request, reply) => {

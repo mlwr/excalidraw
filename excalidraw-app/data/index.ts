@@ -115,6 +115,8 @@ export type SocketUpdateDataSource = {
       socketId: SocketId;
       username: string;
       active: boolean;
+      /** when the presenter took the spotlight (their clock) */
+      since: number;
     };
   };
   IDLE_STATUS: {

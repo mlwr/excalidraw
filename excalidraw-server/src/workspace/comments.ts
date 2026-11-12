@@ -352,7 +352,9 @@ export const createCommentService = (
         }
       }
       ctx.notifications.notify({ ...base, type: "reply", userIds: still });
-    })().catch(() => {});
+    })().catch((error) =>
+      ctx.log.warn({ err: error, threadId }, "reply notifications failed"),
+    );
   };
 
   const createThread = async (

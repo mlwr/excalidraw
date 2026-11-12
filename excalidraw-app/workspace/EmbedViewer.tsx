@@ -145,7 +145,7 @@ export const EmbedViewer = ({ token }: { token: string }) => {
         } catch {
           // keep the generic text
         }
-        throw new Error(message);
+        throw Object.assign(new Error(message), { status: response.status });
       }
       return (await response.json()) as EmbedContent;
     },
@@ -206,8 +206,19 @@ export const EmbedViewer = ({ token }: { token: string }) => {
           elements: restoreElements(elements, null),
           captureUpdate: CaptureUpdateAction.NEVER,
         });
-      } catch {
-        // try again with the next round
+      } catch (error: any) {
+        // the link was switched off or login is needed again: the scene
+        // disappears at once, as the share dialog promises
+        if (error.login || error.status === 404 || error.status === 403) {
+          revision.current = null;
+          knownFiles.current.clear();
+          setState(
+            error.login
+              ? { status: "login", waiting: false }
+              : { status: "error", message: error.message },
+          );
+        }
+        // anything else: try again with the next round
       }
     }, POLL_MS);
     return () => window.clearInterval(timer);

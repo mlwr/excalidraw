@@ -325,6 +325,15 @@ export interface SettingsTable {
   updated_by: string | null;
 }
 
+/** AI usage of past days: sums only, no persons */
+export interface AiUsageDailyTable {
+  day: ColumnType<string, string, string>;
+  requests: number;
+  people: number;
+  prompt_tokens: ColumnType<string, number | string, number | string>;
+  completion_tokens: ColumnType<string, number | string, number | string>;
+}
+
 export interface AiUsageTable {
   user_id: string;
   /** yyyy-mm-dd */
@@ -423,6 +432,7 @@ export interface Database {
   events: EventsTable;
   settings: SettingsTable;
   ai_usage: AiUsageTable;
+  ai_usage_daily: AiUsageDailyTable;
   libraries: LibrariesTable;
   notifications: NotificationsTable;
   user_preferences: UserPreferencesTable;

@@ -68,6 +68,16 @@ const start = async () => {
   if (early.kind === "embedLogin") {
     return renderEmbed(null);
   }
+  // anything else under /embed is no embedding link: never the app there
+  if (/^\/embed(\/|$)/.test(window.location.pathname)) {
+    root.render(
+      <BootError
+        title="Link ungültig"
+        message="Diese Einbettung gibt es nicht."
+      />,
+    );
+    return;
+  }
 
   // intranet fork: the app starts only with a valid company login
   const session = await bootstrapSession();

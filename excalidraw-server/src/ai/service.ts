@@ -2,7 +2,7 @@
  * AI with the company's own language model (K1) under the admins' control
  * (K2): on or off, who may use it, how often per day. Prompts and answers
  * are passed through, never stored; only the number of requests and tokens
- * per person and day is kept, for the daily limit and the figures.
+ * per person is kept for today's limit, and sums per day for the figures.
  */
 import { sql } from "kysely";
 
@@ -39,6 +39,9 @@ Regeln:
       : "in einem hellen Farbschema"
   }.
 - Antworte nur mit dem HTML-Dokument, ohne Codeblock-Markierungen und ohne Erklärungen.`;
+
+// first of the two advisory lock keys: "excalidraw AI limit"
+const LIMIT_LOCK_NAMESPACE = 72_208;
 
 export class AiRefused extends Error {
   constructor(public readonly status: number, message: string) {
@@ -105,32 +108,38 @@ export const createAi = (ctx: AppContext) => {
 
   /**
    * Count a request against the person's daily limit (all features
-   * together). Returns the requests left today, or null at the limit.
+   * together). Returns the day it counts for and the requests left, or null
+   * at the limit. One request of a person at a time: parallel requests must
+   * not all pass the check before any of them is counted.
    */
-  const take = async (userId: string, feature: AiFeature, limit: number) => {
-    const { rows } = await sql<{ used: number }>`
-      insert into ai_usage (user_id, day, feature, requests)
-      select ${userId}, current_date, ${feature}, 1
-      where (
-        select coalesce(sum(requests), 0) from ai_usage
+  const take = (userId: string, feature: AiFeature, limit: number) =>
+    db.transaction().execute(async (trx) => {
+      await sql`select pg_advisory_xact_lock(${LIMIT_LOCK_NAMESPACE}::int, hashtext(${userId}::text))`.execute(
+        trx,
+      );
+      const { rows } = await sql<{ day: string; used: number }>`
+        select to_char(current_date, 'YYYY-MM-DD') as day,
+               coalesce(sum(requests), 0)::int as used
+        from ai_usage
         where user_id = ${userId} and day = current_date
-      ) < ${limit}
-      on conflict (user_id, day, feature)
-        do update set requests = ai_usage.requests + 1
-      returning (
-        select coalesce(sum(requests), 0)::int from ai_usage
-        where user_id = ${userId} and day = current_date
-      ) as used
-    `.execute(db);
-    if (!rows.length) {
-      return null;
-    }
-    return Math.max(0, limit - Number(rows[0].used) - 1);
-  };
+      `.execute(trx);
+      const { day, used } = rows[0];
+      if (Number(used) >= limit) {
+        return null;
+      }
+      await sql`
+        insert into ai_usage (user_id, day, feature, requests)
+        values (${userId}, ${day}::date, ${feature}, 1)
+        on conflict (user_id, day, feature)
+          do update set requests = ai_usage.requests + 1
+      `.execute(trx);
+      return { day, remaining: Math.max(0, limit - Number(used) - 1) };
+    });
 
   const countTokens = async (
     userId: string,
     feature: AiFeature,
+    day: string,
     usage: { prompt_tokens?: number; completion_tokens?: number },
   ) => {
     await sql`
@@ -143,7 +152,7 @@ export const createAi = (ctx: AppContext) => {
           0,
           Math.round(usage.completion_tokens || 0),
         )}
-      where user_id = ${userId} and day = current_date and feature = ${feature}
+      where user_id = ${userId} and day = ${day}::date and feature = ${feature}
     `.execute(db);
   };
 
@@ -170,14 +179,18 @@ export const createAi = (ctx: AppContext) => {
         "Für „Wireframe zu Code“ ist kein Sprachmodell mit Bildverständnis eingerichtet.",
       );
     }
-    const remaining = await take(user.id, feature, current.dailyLimit);
-    if (remaining === null) {
+    const taken = await take(user.id, feature, current.dailyLimit);
+    if (taken === null) {
       throw new AiRefused(
         429,
         `Dein Tageslimit von ${current.dailyLimit} KI-Anfragen ist erreicht. Morgen geht es weiter.`,
       );
     }
-    return { limit: current.dailyLimit, remaining };
+    return {
+      limit: current.dailyLimit,
+      remaining: taken.remaining,
+      day: taken.day,
+    };
   };
 
   /**
@@ -187,6 +200,8 @@ export const createAi = (ctx: AppContext) => {
   async function* generate(
     user: User,
     feature: AiFeature,
+    /** the day the request was counted for (admit) */
+    day: string,
     messages: LlmMessage[],
     signal: AbortSignal,
   ): AsyncGenerator<string> {
@@ -229,7 +244,9 @@ export const createAi = (ctx: AppContext) => {
       throw error;
     } finally {
       if (usage) {
-        await countTokens(user.id, feature, usage).catch(() => {});
+        await countTokens(user.id, feature, day, usage).catch((error) =>
+          ctx.log.warn({ err: error }, "AI tokens not counted"),
+        );
       }
     }
   }
@@ -245,10 +262,18 @@ export const createAi = (ctx: AppContext) => {
     }>`
       select to_char(day, 'YYYY-MM-DD') as day,
              sum(requests)::int as requests,
-             count(distinct user_id)::int as people,
+             sum(people)::int as people,
              sum(prompt_tokens)::bigint as prompt_tokens,
              sum(completion_tokens)::bigint as completion_tokens
-      from ai_usage
+      from (
+        select day, requests, people, prompt_tokens, completion_tokens
+        from ai_usage_daily
+        union all
+        select day, sum(requests)::int, count(distinct user_id)::int,
+               sum(prompt_tokens)::bigint, sum(completion_tokens)::bigint
+        from ai_usage
+        group by day
+      ) figures
       where day > current_date - ${days}::int
       group by day
       order by day desc
@@ -262,6 +287,28 @@ export const createAi = (ctx: AppContext) => {
     }));
   };
 
+  /**
+   * Per person only today's and yesterday's counts are kept (the limit and
+   * requests running over midnight need them); older days become sums.
+   */
+  const condenseUsage = async () => {
+    await sql`
+      with moved as (
+        delete from ai_usage where day < current_date - 1 returning *
+      )
+      insert into ai_usage_daily (day, requests, people, prompt_tokens, completion_tokens)
+      select day, sum(requests)::int, count(distinct user_id)::int,
+             sum(prompt_tokens)::bigint, sum(completion_tokens)::bigint
+      from moved
+      group by day
+      on conflict (day) do update set
+        requests = ai_usage_daily.requests + excluded.requests,
+        people = ai_usage_daily.people + excluded.people,
+        prompt_tokens = ai_usage_daily.prompt_tokens + excluded.prompt_tokens,
+        completion_tokens = ai_usage_daily.completion_tokens + excluded.completion_tokens
+    `.execute(db);
+  };
+
   return {
     configured,
     settings,
@@ -270,6 +317,7 @@ export const createAi = (ctx: AppContext) => {
     admit,
     generate,
     usageByDay,
+    condenseUsage,
   };
 };
 

@@ -97,7 +97,11 @@ import { getCurrentUser, getMaxFileUploadBytes } from "../intranet/session";
 
 import { collabErrorIndicatorAtom } from "./CollabError";
 import Portal from "./Portal";
-import { SPOTLIGHT_HEARTBEAT_MS, spotlightAtom } from "./spotlight";
+import {
+  isLaterSpotlight,
+  SPOTLIGHT_HEARTBEAT_MS,
+  spotlightAtom,
+} from "./spotlight";
 
 import type {
   SocketUpdateDataSource,
@@ -163,6 +167,8 @@ class Collab extends PureComponent<CollabProps, CollabState> {
   private followedBy = new Set<SocketId>();
   /** intranet fork: repeats the spotlight while I have it */
   private spotlightTimer: number | null = null;
+  /** when I took the spotlight */
+  private spotlightSince = 0;
   /** set while the spotlight itself starts or ends following */
   private followingForSpotlight = false;
 
@@ -616,7 +622,12 @@ class Collab extends PureComponent<CollabProps, CollabState> {
     // All socket listeners are moving to Portal
     this.portal.socket.on(
       "client-broadcast",
-      async (encryptedData: ArrayBuffer, iv: Uint8Array<ArrayBuffer>) => {
+      async (
+        encryptedData: ArrayBuffer,
+        iv: Uint8Array<ArrayBuffer>,
+        // intranet fork: the server names the sending socket
+        senderId?: string,
+      ) => {
         if (!this.portal.roomKey) {
           return;
         }
@@ -708,7 +719,10 @@ class Collab extends PureComponent<CollabProps, CollabState> {
           }
 
           case WS_SUBTYPES.SPOTLIGHT: {
-            this.onSpotlight(decryptedData.payload);
+            // only the presenters themselves announce their spotlight
+            if (decryptedData.payload.socketId === senderId) {
+              this.onSpotlight(decryptedData.payload);
+            }
             break;
           }
 
@@ -1137,19 +1151,20 @@ class Collab extends PureComponent<CollabProps, CollabState> {
       ...appJotaiStore.get(spotlightAtom),
       presenting: true,
     });
-    this.portal.broadcastSpotlight(true);
+    this.spotlightSince = Date.now();
+    this.portal.broadcastSpotlight(true, this.spotlightSince);
     if (this.spotlightTimer) {
       window.clearInterval(this.spotlightTimer);
     }
     this.spotlightTimer = window.setInterval(
-      () => this.portal.broadcastSpotlight(true),
+      () => this.portal.broadcastSpotlight(true, this.spotlightSince),
       SPOTLIGHT_HEARTBEAT_MS,
     );
   };
 
   stopSpotlight = () => {
     if (appJotaiStore.get(spotlightAtom).presenting) {
-      this.portal.broadcastSpotlight(false);
+      this.portal.broadcastSpotlight(false, this.spotlightSince);
     }
     this.endSpotlight();
   };
@@ -1172,24 +1187,46 @@ class Collab extends PureComponent<CollabProps, CollabState> {
     socketId,
     username,
     active,
+    since,
   }: {
     socketId: SocketId;
     username: string;
     active: boolean;
+    since: number;
   }) => {
-    if (socketId === this.portal.socket?.id) {
+    const ownId = this.portal.socket?.id;
+    if (socketId === ownId || typeof since !== "number") {
       return;
     }
     const state = appJotaiStore.get(spotlightAtom);
     const following = appJotaiStore.get(userToFollowAtom);
     if (active) {
+      const incoming = { socketId, since };
+      // two at the same time: the later one has it, the other one yields
+      if (
+        state.presenting &&
+        ownId &&
+        !isLaterSpotlight(incoming, {
+          socketId: ownId,
+          since: this.spotlightSince,
+        })
+      ) {
+        return;
+      }
+      if (
+        state.presenter &&
+        state.presenter.socketId !== socketId &&
+        !isLaterSpotlight(incoming, state.presenter)
+      ) {
+        return;
+      }
       const same = state.presenter?.socketId === socketId;
       const optedOut = same ? state.optedOut : false;
       appJotaiStore.set(spotlightAtom, {
         ...state,
         // someone else takes over: mine ends
         presenting: false,
-        presenter: { socketId, username },
+        presenter: { socketId, username, since },
         optedOut,
       });
       if (state.presenting && this.spotlightTimer) {

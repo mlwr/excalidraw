@@ -356,6 +356,8 @@ describeE2E("browser end-to-end", () => {
       .poll(
         async () => {
           await overview.reload();
+          // the list renders after its request, not with the page
+          await overview.waitForSelector(".ws-card");
           return overview.locator(".ws-card img").count();
         },
         // thumbnails are made at most every 30 seconds

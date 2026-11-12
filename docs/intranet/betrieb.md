@@ -203,15 +203,17 @@ ai:
   dailyLimit: 50
 ```
 
-Gemma 4 und Qwen liefern gutes Mermaid; „Denkblöcke“ (`<think>…</think>`) und Codeblock-Markierungen filtert der Server heraus. Unter „Verwaltung → KI“ schalten App-Admins die Funktionen ab, beschränken sie auf eine Keycloak-Rolle und ändern das Tageslimit; dort steht auch die Nutzung pro Tag.
+Gemma 4 und Qwen liefern gutes Mermaid; „Denkblöcke“ (`<think>…</think>`, `<thinking>…</thinking>`) am Anfang der Antwort und Codeblock-Markierungen filtert der Server heraus, gleich wie lang sie sind. Modelle, deren Chat-Vorlage das öffnende `<think>` selbst einfügt (z. B. Qwen-„Thinking“-Varianten), brauchen in vLLM den Reasoning-Parser (`--reasoning-parser qwen3` bzw. `deepseek_r1`), sonst landen ihre Überlegungen in der Antwort. Unter „Verwaltung → KI“ schalten App-Admins die Funktionen ab, beschränken sie auf eine Keycloak-Rolle und ändern das Tageslimit; dort steht auch die Nutzung pro Tag. Das Tageslimit gilt pro Person über alle Pods, auch bei parallelen Anfragen.
 
 ### E-Mail-Benachrichtigungen
 
 Mit `smtp.host` (und `smtp.from`) verschickt der Server ungelesene Benachrichtigungen gebündelt per E-Mail, frühestens nach `smtp.delayMinutes`. Die E-Mails enthalten nur, wer wo was getan hat, und einen Link, keine Inhalte von Kommentaren. Jede Person stellt in der Glocke ein, welche Arten per E-Mail kommen.
 
+Beim Versand prüft der Server erneut, ob die Person noch aktiv ist, diese E-Mails noch will und die Szene oder Collection noch sehen darf; sonst entfällt die E-Mail. Ist das Relay nicht erreichbar, bleiben die E-Mails liegen und gehen beim nächsten Lauf (jede Minute) raus, höchstens 24 Stunden lang; lehnt das Relay eine Adresse ab (5xx), entfällt nur diese E-Mail.
+
 ### Einbetten in Wiki und Intranet
 
-Eine eingebettete Szene ist eine eigene Seite (`/embed/<token>`), die Intranetseiten per iframe zeigen. Ihre Content-Security-Policy erlaubt das für `embed.frameAncestors` (Standard: alle Hosts unter der übergeordneten Domain der App, etwa `https://*.intranet.example`); alle anderen Seiten der App lassen sich weiterhin nicht einbetten.
+Eine eingebettete Szene ist eine eigene Seite (`/embed/<token>`), die Intranetseiten per iframe zeigen. Ihre Content-Security-Policy erlaubt das für `embed.frameAncestors` (Standard: alle Hosts unter der übergeordneten Domain der App, etwa `https://*.intranet.example`); alle anderen Seiten der App lassen sich weiterhin nicht einbetten, auch keine anderen Pfade unter `/embed/`. Die eingebettete Seite zeigt nur die Szene und einen Link, der sie in einem neuen Tab öffnet. Wer nur bestimmte Wikis zulassen will, setzt `embed.frameAncestors` auf deren Hosts.
 
 - Liegt die Intranetseite unter derselben Domain (z. B. `wiki.intranet.example` und `excalidraw.intranet.example`), schickt der Browser das Anmelde-Cookie mit: Angemeldete sehen die Szene, andere bekommen einen Anmelden-Knopf.
 - Liegt sie unter einer anderen Domain, blockieren Browser das Cookie im iframe. Dann muss der Workspace „Einbettungen ohne Anmeldung“ erlauben (Verwaltung → Workspaces → Richtlinien); wer den Link kennt, sieht die Szene dann ohne Anmeldung.

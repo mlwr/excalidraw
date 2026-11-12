@@ -94,7 +94,7 @@ describeWithDb("realtime collaboration", () => {
     const outsider = open(bobCookie);
     await waitFor(outsider, "init-room");
 
-    const received = waitFor<[ArrayBuffer, Uint8Array]>(
+    const received = waitFor<[ArrayBuffer, Uint8Array, string]>(
       second,
       "client-broadcast",
     );
@@ -110,8 +110,10 @@ describeWithDb("realtime collaboration", () => {
       new Uint8Array([1, 2, 3]),
       new Uint8Array([4]),
     );
-    const [data] = await received;
+    const [data, , sender] = await received;
     expect(Array.from(new Uint8Array(data))).toEqual([1, 2, 3]);
+    // receivers learn who sent it (nobody speaks for someone else)
+    expect(sender).toBe(first.id);
   });
 
   it("relays the viewport to followers in the same room only", async () => {

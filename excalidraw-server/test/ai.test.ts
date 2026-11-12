@@ -1,6 +1,7 @@
 /**
  * AI with the company's language model (K1) under the admins' control (K2).
  */
+import { sql } from "kysely";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createOutputFilter } from "../src/ai/llm.js";
@@ -61,6 +62,32 @@ describe("filtering model output", () => {
     );
     // backticks inside the answer stay
     expect(run(["const a = `b`;\n", "done"])).toBe("const a = `b`;\ndone");
+  });
+
+  it("drops thinking of any length; only thinking is no answer", () => {
+    const answer = "flowchart TD\n  A --> B";
+    const thinking = "Ich überlege, welche Knoten es braucht. ".repeat(40);
+    // in small pieces, as models stream
+    const pieces = `<think>${thinking}</think>\n\n${answer}`.match(
+      /[\s\S]{1,7}/g,
+    )!;
+    expect(run(pieces)).toBe(answer);
+    expect(run([`<thinking>${thinking}</thinking>`, answer])).toBe(answer);
+    expect(run(["<think>abc</th", "ink>", answer])).toBe(answer);
+    expect(() => run([`<think>${thinking}`])).toThrow(/nur überlegt/);
+    const filter = createOutputFilter(1000);
+    expect(() => {
+      for (let i = 0; i < 100; i++) {
+        filter.push("hmm ".repeat(10));
+      }
+    }).not.toThrow();
+    const thinker = createOutputFilter(1000);
+    thinker.push("<think>");
+    expect(() => {
+      for (let i = 0; i < 100; i++) {
+        thinker.push("hmm ".repeat(10));
+      }
+    }).toThrow(/zu lange überlegt/);
   });
 });
 
@@ -297,5 +324,52 @@ describeWithDb("AI", () => {
     const refused = await ask(user, "Ablauf");
     expect(refused.statusCode).toBe(503);
     expect(refused.body).toMatch(/keine KI eingerichtet/);
+  });
+  it("counts parallel requests against the daily limit one by one", async () => {
+    llm = await startFakeLlm();
+    env = await createTestEnv({
+      AI_BASE_URL: llm.url,
+      AI_MODEL: "qwen",
+      AI_DAILY_LIMIT: "2",
+    });
+    const user = await person(bob);
+    const answers = await Promise.all(
+      Array.from({ length: 8 }, () => ask(user, "Ablauf")),
+    );
+    expect(answers.map((answer) => answer.statusCode).sort()).toEqual([
+      200, 200, 429, 429, 429, 429, 429, 429,
+    ]);
+  });
+
+  it("keeps usage per person only for the limit, then sums per day", async () => {
+    llm = await startFakeLlm();
+    env = await createTestEnv({ AI_BASE_URL: llm.url, AI_MODEL: "qwen" });
+    const admin = await person(alice);
+    const user = await person(bob);
+    expect((await ask(user, "Ablauf")).statusCode).toBe(200);
+    const db = env.built.ctx.db;
+    const ids = (await db.selectFrom("users").select("id").execute()).map(
+      (row) => row.id,
+    );
+    await sql`
+      insert into ai_usage (user_id, day, feature, requests, prompt_tokens, completion_tokens)
+      values (${ids[0]}, current_date - 3, 'text-to-diagram', 4, 400, 100),
+             (${ids[1]}, current_date - 3, 'diagram-to-code', 2, 200, 50)
+    `.execute(db);
+    await env.built.jobs.run("traces");
+    // per person: only today's
+    expect(
+      await db.selectFrom("ai_usage").select("requests").execute(),
+    ).toEqual([{ requests: 1 }]);
+    const usage = (await admin.app("GET", "/api/admin/ai")).json().usage;
+    expect(usage).toEqual([
+      expect.objectContaining({ requests: 1, people: 1 }),
+      expect.objectContaining({
+        requests: 6,
+        people: 2,
+        promptTokens: 600,
+        completionTokens: 150,
+      }),
+    ]);
   });
 });

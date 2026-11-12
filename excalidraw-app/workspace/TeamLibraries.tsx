@@ -18,6 +18,7 @@ import type {
   LibraryItems,
 } from "@excalidraw/excalidraw/types";
 
+import { BackendError } from "../intranet/api";
 import { libraryApi } from "../intranet/libraryApi";
 
 import { NameDialog } from "./DashboardDialogs";
@@ -79,7 +80,11 @@ export const TeamLibrariesTab = ({
   const app = useApp();
   const [list, setList] = useState<LibraryList | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [items, setItems] = useState<LibraryItems | null>(null);
+  const [loaded, setLoaded] = useState<{
+    items: LibraryItems;
+    revision: number;
+  } | null>(null);
+  const items = loaded?.items ?? null;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -110,29 +115,64 @@ export const TeamLibrariesTab = ({
 
   useEffect(() => {
     if (!selectedId) {
-      setItems(null);
+      setLoaded(null);
       return;
     }
     let cancelled = false;
-    setItems(null);
+    setLoaded(null);
     libraryApi
       .get(selectedId)
-      .then((result) => !cancelled && setItems(result.libraryItems))
+      .then(
+        (result) =>
+          !cancelled &&
+          setLoaded({
+            items: result.libraryItems,
+            revision: result.library.revision,
+          }),
+      )
       .catch((err) => !cancelled && setError(err.message));
     return () => {
       cancelled = true;
     };
   }, [selectedId]);
 
-  const save = async (next: LibraryItems) => {
-    if (!library) {
+  /**
+   * Apply a change and save it. If someone else saved in between, their
+   * version is loaded and the change applied to it again: nobody's items
+   * get lost.
+   */
+  const change = async (apply: (current: LibraryItems) => LibraryItems) => {
+    if (!library || !loaded) {
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await libraryApi.save(library.id, next);
-      setItems(next);
+      let base = loaded;
+      for (let attempt = 1; ; attempt++) {
+        const next = apply(base.items);
+        try {
+          const { revision } = await libraryApi.save(
+            library.id,
+            next,
+            base.revision,
+          );
+          setLoaded({ items: next, revision });
+          break;
+        } catch (err) {
+          if (
+            !(err instanceof BackendError && err.status === 409) ||
+            attempt >= 3
+          ) {
+            throw err;
+          }
+          const fresh = await libraryApi.get(library.id);
+          base = {
+            items: fresh.libraryItems,
+            revision: fresh.library.revision,
+          };
+        }
+      }
       loadList();
     } catch (err: any) {
       setError(err.message);
@@ -150,15 +190,13 @@ export const TeamLibrariesTab = ({
       setError("Erst Elemente auf der Zeichenfläche auswählen.");
       return;
     }
-    save([
-      {
-        id: randomId(),
-        status: "published",
-        created: Date.now(),
-        elements: JSON.parse(JSON.stringify(elements)),
-      },
-      ...items,
-    ]);
+    const added: LibraryItem = {
+      id: randomId(),
+      status: "published",
+      created: Date.now(),
+      elements: JSON.parse(JSON.stringify(elements)),
+    };
+    change((current) => [added, ...current]);
   };
 
   const insert = (item: LibraryItem) => {
@@ -270,7 +308,9 @@ export const TeamLibrariesTab = ({
                       aria-label="Aus der Bibliothek entfernen"
                       disabled={busy}
                       onClick={() =>
-                        save(items.filter((other) => other.id !== item.id))
+                        change((current) =>
+                          current.filter((other) => other.id !== item.id),
+                        )
                       }
                     >
                       ×

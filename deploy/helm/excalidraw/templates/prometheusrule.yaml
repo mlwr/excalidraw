@@ -32,7 +32,7 @@ spec:
             summary: Mehr als 5 % der Anfragen an Excalidraw scheitern mit 5xx
         - alert: ExcalidrawSlow
           expr: |
-            histogram_quantile(0.95, sum by (le) (rate(excalidraw_http_request_duration_seconds_bucket{job="{{ $job }}",route=~"/api/.*"}[10m]))) > 2
+            histogram_quantile(0.95, sum by (le) (rate(excalidraw_http_request_duration_seconds_bucket{job="{{ $job }}",route=~"/api/.*",route!~"/api/ai/.*"}[10m]))) > 2
           for: 15m
           labels:
             severity: warning

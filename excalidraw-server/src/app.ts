@@ -310,7 +310,10 @@ export const buildApp = async (
       {
         name: "traces",
         everyMs: 6 * 60 * MINUTE,
-        run: () => ctx.lifecycle.purgeTraces(),
+        run: async () => {
+          await ctx.ai.condenseUsage();
+          await ctx.lifecycle.purgeTraces();
+        },
       },
       {
         name: "emails",
@@ -409,6 +412,7 @@ export const buildApp = async (
   const close = async () => {
     jobs.stop();
     io.close();
+    ctx.notifications.close();
     await metrics.close();
     await app.close();
     await dbHandle.close();

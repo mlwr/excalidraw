@@ -224,7 +224,9 @@ export const registerWorkspaceRoutes = (
           ...target,
         }),
       )
-      .catch(() => {});
+      .catch((error) =>
+        request.log.warn({ err: error }, "share notifications failed"),
+      );
   };
 
   const workspaceById = (id: string) =>

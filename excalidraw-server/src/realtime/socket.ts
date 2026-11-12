@@ -292,7 +292,8 @@ export const attachRealtime = (
         const target = volatile
           ? socket.volatile.broadcast.to(roomId)
           : socket.broadcast.to(roomId);
-        target.emit("client-broadcast", encryptedData, iv);
+        // the sender, so that nobody can speak for someone else
+        target.emit("client-broadcast", encryptedData, iv, socket.id);
       };
 
     socket.on("server-broadcast", relay(false));

@@ -20,6 +20,13 @@ import type {
 
 const MAX_PAGES = 50;
 const PAGE_GAP = 80;
+/** bigger files are no documents to annotate but print data */
+export const MAX_PDF_BYTES = 50 * 1024 * 1024;
+/** longest side of a page image: sharp enough to read and to present */
+const MAX_PAGE_PX = 2000;
+/** all page images together, so that big documents stay workable */
+const MAX_TOTAL_PIXELS = 100_000_000;
+const JPEG_QUALITY = 0.9;
 
 const sha1 = async (bytes: Uint8Array) => {
   const digest = await crypto.subtle.digest("SHA-1", new Uint8Array(bytes));
@@ -31,8 +38,16 @@ const sha1 = async (bytes: Uint8Array) => {
 export const importPdf = async (
   api: ExcalidrawImperativeAPI,
   file: File,
-  options: { maxImageDimension: number },
+  options: {
+    maxImageDimension: number;
+    onProgress?: (page: number, pages: number) => void;
+  },
 ) => {
+  if (file.size > MAX_PDF_BYTES) {
+    throw new Error(
+      `Die Datei ist zu groß (höchstens ${MAX_PDF_BYTES / 1024 / 1024} MB).`,
+    );
+  }
   const [pdfjs, { default: workerUrl }] = await Promise.all([
     import("pdfjs-dist"),
     import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
@@ -46,6 +61,7 @@ export const importPdf = async (
   }).promise;
   const pages = Math.min(document.numPages, MAX_PAGES);
   const baseName = file.name.replace(/\.pdf$/i, "") || "PDF";
+  const pixelsPerPage = MAX_TOTAL_PIXELS / pages;
 
   // below what is already there, left-aligned with it
   const existing = api.getSceneElements();
@@ -57,12 +73,16 @@ export const importPdf = async (
   const files: BinaryFileData[] = [];
   const skeletons: Parameters<typeof convertToExcalidrawElements>[0] = [];
   for (let number = 1; number <= pages; number++) {
+    options.onProgress?.(number, pages);
     const page = await document.getPage(number);
     const unscaled = page.getViewport({ scale: 1 });
-    // sharp enough to read, within the image size the app accepts
+    // sharp enough to read, within the image size the app accepts and the
+    // share of all pages together
+    const longest = Math.max(unscaled.width, unscaled.height);
     const scale = Math.min(
       2,
-      options.maxImageDimension / Math.max(unscaled.width, unscaled.height),
+      Math.min(MAX_PAGE_PX, options.maxImageDimension) / longest,
+      Math.sqrt(pixelsPerPage / (unscaled.width * unscaled.height)),
     );
     const viewport = page.getViewport({ scale });
     const canvas = window.document.createElement("canvas");
@@ -72,13 +92,17 @@ export const importPdf = async (
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvasContext: context, viewport }).promise;
-    const dataURL = canvas.toDataURL("image/png") as DataURL;
+    // pages are paper: JPEG keeps them a fraction of the size of PNG
+    const dataURL = canvas.toDataURL("image/jpeg", JPEG_QUALITY) as DataURL;
+    // give the canvas memory back before the next page
+    canvas.width = 0;
+    canvas.height = 0;
     const bytes = new TextEncoder().encode(dataURL);
     const fileId = (await sha1(bytes)) as FileId;
     files.push({
       id: fileId,
       dataURL,
-      mimeType: "image/png",
+      mimeType: "image/jpeg",
       created: Date.now(),
     });
     // the page at its size in PDF points (1 pt = 1 scene px)

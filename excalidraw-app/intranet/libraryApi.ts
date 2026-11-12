@@ -64,10 +64,16 @@ export const libraryApi = {
       await backendFetch(`/api/libraries/${encodeURIComponent(id)}`),
     ),
 
-  save: async (id: string, libraryItems: LibraryItems_anyVersion) =>
+  /** with expectedRevision: 409 if someone else saved in between */
+  save: async (
+    id: string,
+    libraryItems: LibraryItems_anyVersion,
+    expectedRevision?: number,
+  ) =>
     json<{ revision: number }>(
       await send("PUT", `/api/libraries/${encodeURIComponent(id)}`, {
         libraryItems,
+        ...(expectedRevision === undefined ? {} : { expectedRevision }),
       }),
     ),
 

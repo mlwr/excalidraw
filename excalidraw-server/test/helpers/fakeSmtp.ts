@@ -12,9 +12,12 @@ export interface FakeMail {
   data: string;
 }
 
-export const startFakeSmtp = async () => {
+export const startFakeSmtp = async (fixedPort = 0) => {
   const mails: FakeMail[] = [];
+  const sockets = new Set<import("node:net").Socket>();
   const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
     let buffer = "";
     let inData = false;
     let current: FakeMail = { from: "", to: [], data: "" };
@@ -62,11 +65,20 @@ export const startFakeSmtp = async () => {
     });
     socket.on("error", () => {});
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) =>
+    server.listen(fixedPort, "127.0.0.1", resolve),
+  );
   const { port } = server.address() as AddressInfo;
   return {
     port,
     mails,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () =>
+      new Promise<void>((resolve) => {
+        // pooled connections of the app would keep the server open
+        for (const socket of sockets) {
+          socket.destroy();
+        }
+        server.close(() => resolve());
+      }),
   };
 };

@@ -102,11 +102,10 @@ export async function* streamChat(
         continue;
       }
       if (json?.error) {
+        // gateways may echo the input in their messages: not passed on
         throw new LlmError(
           502,
-          `Fehler des Sprachmodells: ${String(
-            json.error.message || json.error,
-          ).slice(0, 200)}`,
+          "Das Sprachmodell hat die Antwort abgebrochen.",
         );
       }
       const choice = json?.choices?.[0];
@@ -122,17 +121,29 @@ export async function* streamChat(
   }
 }
 
+/** reasoning blocks some models put before their answer */
+const THINK_TAGS = ["<think>", "<thinking>"];
+
+/** reasoning beyond this many characters: give up on the request */
+export const MAX_THINKING_CHARS = 200_000;
+
+/** an opening fence line longer than this is no fence line */
+const MAX_FENCE_LINE = 200;
+
 /**
  * Models wrap their answer in a code fence or start with a thinking block,
  * although asked not to. The app needs the bare Mermaid code or HTML: this
  * filter removes both while streaming (it holds back what may turn out to
- * be a closing fence until it knows).
+ * be a closing fence until it knows). A thinking block is dropped however
+ * long it is; one that never ends is an error, not an answer.
  */
-export const createOutputFilter = () => {
-  let head = "";
-  let started = false;
+export const createOutputFilter = (maxThinking = MAX_THINKING_CHARS) => {
+  let state: "start" | "thinking" | "answer" = "start";
+  /** start: what came so far; thinking: what may be the start of the end tag */
+  let pending = "";
+  let closing = "";
+  let thought = 0;
   let tail = "";
-  const MAX_HEAD = 400;
   // trailing whitespace, possibly after a line with only backticks
   const TAIL_RE = /(\n[ \t]*`{1,3}[ \t]*)?\s*$/;
 
@@ -143,53 +154,90 @@ export const createOutputFilter = () => {
     return combined.slice(0, combined.length - held.length);
   };
 
-  /** the start of the answer without thinking block and opening fence */
-  const strip = (text: string, final: boolean): string | null => {
-    let rest = text.replace(/^\s+/, "");
-    if (rest.startsWith("<think>")) {
-      const end = rest.indexOf("</think>");
-      if (end < 0) {
-        return final ? "" : null;
+  const answer = (text: string) => {
+    state = "answer";
+    pending = "";
+    return emit(text);
+  };
+
+  /** move on as far as the text so far allows */
+  const step = (final: boolean): string => {
+    for (;;) {
+      if (state === "answer") {
+        return "";
       }
-      rest = rest.slice(end + "</think>".length).replace(/^\s+/, "");
-    } else if (!final && rest.length < 7 && "<think>".startsWith(rest)) {
-      return null;
-    }
-    if (rest.startsWith("```")) {
-      const newline = rest.indexOf("\n");
-      if (newline < 0) {
-        return final ? "" : null;
+      if (state === "thinking") {
+        const end = pending.indexOf(closing);
+        if (end < 0) {
+          const keep = Math.min(pending.length, closing.length - 1);
+          thought += pending.length - keep;
+          pending = pending.slice(pending.length - keep);
+          if (thought > maxThinking) {
+            throw new LlmError(
+              502,
+              "Das Sprachmodell hat zu lange überlegt. Bitte die Anfrage vereinfachen.",
+            );
+          }
+          if (final) {
+            throw new LlmError(
+              502,
+              "Das Sprachmodell hat nur überlegt und keine Antwort geliefert. Bitte noch einmal versuchen.",
+            );
+          }
+          return "";
+        }
+        thought += end;
+        pending = pending.slice(end + closing.length);
+        state = "start";
+        continue;
       }
-      rest = rest.slice(newline + 1);
-    } else if (!final && "```".startsWith(rest)) {
-      return null;
+      const rest = pending.replace(/^\s+/, "");
+      const open = THINK_TAGS.find((tag) => rest.startsWith(tag));
+      if (open) {
+        state = "thinking";
+        closing = `</${open.slice(1)}`;
+        pending = rest.slice(open.length);
+        continue;
+      }
+      if (!final && THINK_TAGS.some((tag) => tag.startsWith(rest))) {
+        pending = rest;
+        return "";
+      }
+      if (rest.startsWith("```")) {
+        const newline = rest.indexOf("\n");
+        if (newline >= 0) {
+          return answer(rest.slice(newline + 1));
+        }
+        if (final) {
+          return answer("");
+        }
+        if (rest.length <= MAX_FENCE_LINE) {
+          pending = rest;
+          return "";
+        }
+        return answer(rest);
+      }
+      if (!final && "```".startsWith(rest)) {
+        pending = rest;
+        return "";
+      }
+      return answer(rest);
     }
-    return rest;
   };
 
   return {
     push: (text: string): string => {
-      if (started) {
+      if (state === "answer") {
         return emit(text);
       }
-      head += text;
-      const rest = strip(head, head.length > MAX_HEAD);
-      if (rest === null) {
-        return "";
-      }
-      started = true;
-      head = "";
-      return emit(rest);
+      pending += text;
+      return step(false);
     },
     end: (): string => {
-      if (!started) {
-        const rest = strip(head, true) || "";
-        started = true;
-        return emit(rest).replace(/\n[ \t]*```[ \t]*$/, "");
-      }
+      const rest = state === "answer" ? "" : step(true);
       // what is held back is whitespace or a closing fence
       tail = "";
-      return "";
+      return rest;
     },
   };
 };

@@ -13,8 +13,8 @@ export interface SpotlightState {
   presenting: boolean;
   /** how many follow me */
   followers: number;
-  /** someone else has the spotlight */
-  presenter: { socketId: SocketId; username: string } | null;
+  /** someone else has the spotlight (since: when they took it) */
+  presenter: { socketId: SocketId; username: string; since: number } | null;
   /** I stopped following that presenter */
   optedOut: boolean;
 }
@@ -28,3 +28,12 @@ export const spotlightAtom = atom<SpotlightState>({
 
 /** how often the presenter repeats the spotlight (for people who join) */
 export const SPOTLIGHT_HEARTBEAT_MS = 5000;
+
+/**
+ * Two people took the spotlight at about the same time: the later one has
+ * it, decided the same way on every client (ties by socket id).
+ */
+export const isLaterSpotlight = (
+  a: { since: number; socketId: string },
+  b: { since: number; socketId: string },
+) => (a.since !== b.since ? a.since > b.since : a.socketId > b.socketId);
