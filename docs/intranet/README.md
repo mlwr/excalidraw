@@ -57,10 +57,11 @@ Ein Pod liefert die gebaute App aus, beantwortet die API unter `/api` und betrei
 
 | Adresse | Inhalt |
 | --- | --- |
-| `/` | Dashboard: zuletzt geöffnete Szenen, „Meine Szenen“, „Mit mir geteilt“, Team-Collections, Suche |
+| `/` | Dashboard: zuletzt geöffnete Szenen, „Meine Szenen“, „Mit mir geteilt“, Aktivität, Team-Collections, Papierkorb, Suche in Namen, Zeichnungen und Kommentaren, Export als ZIP; oben links der Wechsel zwischen Workspaces |
 | `/s/<id>` | Workspace-Szene. Alle, die sie gerade geöffnet haben, arbeiten live zusammen; Änderungen werden laufend auf dem Server gespeichert |
 | `/v/<token>` | Nur-Lese-Link einer Szene. Nur für angemeldete Personen, öffnet die Szene in der Ansicht |
 | `/local` | Lokale Zeichnung wie auf excalidraw.com, nur im Browser gespeichert; über das Menü „Im Workspace speichern“ wird daraus eine Szene |
+| `/admin` | Verwaltung für App-Admins (Workspaces, Personen, Audit-Log, Branding, Kennzahlen) und Workspace-Admins (ihre Workspaces) |
 | `/#room=…`, `/#json=…` | Ad-hoc-Live-Sitzung bzw. Teilen-Link mit Ende-zu-Ende-Verschlüsselung (wie bisher) |
 
 Rechte:
@@ -69,6 +70,9 @@ Rechte:
 - **Team-Collections** legt jede angemeldete Person an. Eingetragene Personen oder Keycloak-Gruppen erhalten „Kann ansehen“, „Kann bearbeiten“ oder „Verwaltet“. Eine Freigabe an eine Gruppe gilt auch für ihre Untergruppen (`/IT` umfasst `/IT/Architektur`). Admins (`excalidraw-admin`) sehen und verwalten alle Team-Collections.
 - **Einzelne Szenen** lassen sich zusätzlich an Personen oder Gruppen freigeben, ohne die Collection zu öffnen.
 - **Kommentare** schreibt jede Person, die die Szene sehen darf, auch mit Leserecht. Erledigen darf, wer bearbeiten darf, und wer den Kommentar begonnen hat; löschen darf die Verfasserin bzw. der Verfasser und wer die Szene verwaltet.
+- **Workspaces**: Der allgemeine Workspace ist für alle offen. Weitere Workspaces legen App-Admins an und tragen Mitglieder (Personen oder Keycloak-Gruppen) und Workspace-Admins ein. Workspace-Admins verwalten alle Team-Collections, Mitglieder und Richtlinien ihres Workspaces (Nur-Lese-Links, direktes Teilen, wer Collections anlegt, wer exportiert, Frist im Papierkorb). Wer kein Mitglied ist, sieht dort nur, was mit ihm geteilt wurde.
+- **Papierkorb**: Gelöschte Szenen holt zurück, wer sie bearbeiten durfte oder sie gelöscht hat. Nach der Frist (Standard 30 Tage) sind sie endgültig weg.
+- **Versionen**: im Editor über das Hauptmenü „Versionsverlauf…“; alle mit Zugriff sehen frühere Stände, wer bearbeiten darf, stellt einen wieder her.
 
 Kommentieren: im Editor oben rechts das Sprechblasen-Symbol, dann „Kommentar hinzufügen“ und auf die Stelle klicken. Liegt dort ein Element, hängt der Kommentar daran und wandert mit, wenn es verschoben wird.
 
@@ -86,7 +90,8 @@ Zum Ausprobieren der Freigaben in einem zweiten Browserprofil (oder privaten Fen
 
 ## Weiter
 
-- [Betrieb: Image, Helm, Keycloak, Konfiguration](./betrieb.md)
+- [Betrieb: Image, Helm, Keycloak, Konfiguration, Monitoring, Backup](./betrieb.md)
+- [Datenschutz und Löschkonzept](./datenschutz.md)
 - [Entwicklung: lokal starten, Tests, Upstream-Updates](./entwicklung.md)
 - [REST-API: Tokens, Endpunkte, Beispiele](./api.md)
 - [MCP-Server: KI-Assistenten anbinden](./mcp.md)

@@ -31,7 +31,7 @@ Grenzen: `API_RATE_LIMIT_PER_MINUTE` Anfragen pro Token und Minute (Standard 300
 | `POST /scenes` | Szene anlegen: leer, aus Element-Skeletten (`elements`) oder aus einer `.excalidraw`-Datei (`content`) |
 | `GET /scenes/{id}` | Metadaten, Link (`url`), Revision, eigene Rechte |
 | `PATCH /scenes/{id}` | Umbenennen (`name`) oder verschieben (`collectionId`) |
-| `DELETE /scenes/{id}` | Löschen |
+| `DELETE /scenes/{id}` | In den Papierkorb legen (wiederherstellen im Dashboard) |
 | `GET /scenes/{id}/content` | Inhalt als `.excalidraw`-Dokument, mit Bildern (`?files=false` ohne) |
 | `PUT /scenes/{id}/content` | Inhalt ersetzen, optional mit `expectedRevision` (409 bei Konflikt) |
 | `POST /scenes/{id}/elements` | Elemente hinzufügen (Skelett-Format) |
@@ -42,6 +42,8 @@ Grenzen: `API_RATE_LIMIT_PER_MINUTE` Anfragen pro Token und Minute (Standard 300
 | `POST /scenes/{id}/comments` | Kommentar an einer Stelle oder einem Element |
 | `POST /comment-threads/{id}/comments` | Antworten |
 | `PATCH /comment-threads/{id}` | `{"resolved": true}` erledigt, `false` wieder offen |
+| `GET /search?q=&workspace=` | Suche über Namen, Texte in Zeichnungen und Kommentare; Ergebnisse mit Textausschnitt (`snippet`), ohne `workspace` über alle Workspaces |
+| `GET /export?workspace=&collection=` | ZIP mit allen sichtbaren Szenen eines Workspaces oder einer Collection als `.excalidraw` mit Bildern, dazu `manifest.json` (6 Anfragen pro Minute; die Richtlinie des Workspaces kann Export auf Admins beschränken) |
 
 Fehler kommen als `{"error": "<code>", "message": "<Text>"}`. Szenen und Collections ohne Zugriff sind nicht von nicht vorhandenen zu unterscheiden (beide 404).
 

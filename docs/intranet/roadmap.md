@@ -9,7 +9,7 @@ Grundlage ist die Priorisierung vom 11.11.2026 (Muss, Soll, Kann, Gestrichen) de
 | 1 Fundament | B1 Server mit Datenbank, B2 Keycloak-SSO, B3 Rollen und Gruppen, B4 Echtzeit-Server, B5 keine Internet-Aufrufe, B6 Deployment (Helm), S1 Sicherheits-Grundschutz, E1 Bilder bis 4K | umgesetzt |
 | 2 Workspace | W2 Szenen auf dem Server, W1 Dashboard, W3 Collections, T1 Teilen mit Personen und Teams, T2 Nur-Lese-Links, Z1 dauerhafte Live-Zusammenarbeit | umgesetzt |
 | 3 Kommentare und Schnittstellen | Z2 Kommentare, I1 REST-API, I2 MCP-Server | umgesetzt |
-| 4 Soll: Ablage und Betrieb | W5 Papierkorb, W6 Suche, W7 Versionsverlauf, W8 Aktivitäts-Feed, W9 Export, W10 mehrere Workspaces, T5 Admin-Richtlinien, S2 Audit-Log, S3 Löschkonzept, B7 Monitoring/Backups, B8 Branding | geplant |
+| 4 Soll: Ablage und Betrieb | W5 Papierkorb, W6 Suche, W7 Versionsverlauf, W8 Aktivitäts-Feed, W9 Export, W10 mehrere Workspaces, T5 Admin-Richtlinien, S2 Audit-Log, S3 Löschkonzept, B7 Monitoring/Backups, B8 Branding | umgesetzt |
 | 5 Soll: Zusammenarbeit, Präsentation, KI, Bibliotheken | Z3 Benachrichtigungen, Z4 Spotlight, T3 Einbetten, P1 Präsentationsmodus, P7 Export PDF/PPTX, K1 KI mit internem Sprachmodell, K2 KI-Steuerung, L1 persönliche Bibliothek, L2 Team-Bibliotheken, E4 PDF-Import | geplant |
 | 6 Kann | E2, E3, I3, L3, P2–P6, S4, W4 nach Bedarf | offen |
 
@@ -47,6 +47,27 @@ Bekannte Grenzen:
 - Kommentare sind auf Smartphones noch nicht bedienbar (Markierungen ja, Liste und Eingabe nein).
 - MCP-Clients melden sich mit persönlichen Tokens an. Anmeldung per OAuth über Keycloak (MCP-Autorisierung) wäre eine spätere Ausbaustufe.
 - Diagramme werden in Ebenen mit geraden Pfeilen angeordnet; rechtwinklige Pfeile lassen sich über API und MCP noch nicht anlegen.
+
+### Phase 4 im Detail
+
+- **W5** Papierkorb je Workspace: Gelöschte Szenen lassen sich wiederherstellen (von allen, die sie bearbeiten durften, und von der Person, die gelöscht hat) oder endgültig löschen. Nach der Frist des Workspaces (Standard 30 Tage) löscht der Server sie mit Versionen, Kommentaren und Bildern.
+- **W6** Suche über Namen, Texte in Zeichnungen (auch Beschriftungen, Frame-Namen, Links) und Kommentare, mit Textausschnitt im Ergebnis. Gesucht wird nach Wortanfängen („Urlaub“ findet „Urlaubsantrag“), alle Wörter müssen vorkommen. Der Index enthält keine Wörter, nur verschlüsselte Hashes ([Datenschutz](./datenschutz.md#suche)). Auch über REST-API und MCP.
+- **W7** Versionsverlauf im Editor (Hauptmenü): Vor dem Speichern sichert der Server den vorherigen Stand, höchstens alle 10 Minuten, nach zwei Tagen einer pro Tag, bis 90 Tage. Alle mit Zugriff sehen Vorschauen; wer bearbeiten darf, stellt einen Stand für alle wieder her (der ersetzte Stand bleibt im Verlauf).
+- **W8** Aktivität je Workspace: wer was angelegt, bearbeitet, verschoben, geteilt, kommentiert oder gelöscht hat, nur für Szenen und Collections, die man sehen darf. Mehrere Speichervorgänge einer Person innerhalb einer halben Stunde sind ein Eintrag.
+- **W9** Export als ZIP: alles, was man in einem Workspace sehen darf, oder eine Collection, als `.excalidraw`-Dateien mit Bildern und einer `manifest.json`. Auch über `GET /api/v1/export`.
+- **W10** Mehrere Workspaces mit Mitgliedern (Personen oder Keycloak-Gruppen) und Workspace-Admins. Der allgemeine Workspace ist für alle offen. Wer kein Mitglied ist, sieht in einem Workspace nur, was mit ihm geteilt wurde.
+- **T5** Richtlinien je Workspace: Nur-Lese-Links, direktes Teilen einzelner Szenen, wer Collections anlegt, wer exportiert, Frist im Papierkorb. Abschalten entfernt bestehende Links und Freigaben sofort.
+- **S2** Audit-Log für App-Admins: Anmeldungen (auch abgelehnte), Tokens, Freigaben, Exporte, Löschungen und Verwaltungsaktionen mit Zeit, Person und Adresse; Filter nach Art und Zeitraum, Download als CSV.
+- **S3** Löschkonzept mit festen Fristen und dem Entfernen von Personen samt Übergabe ihrer Szenen ([Datenschutz und Löschkonzept](./datenschutz.md)).
+- **B7** Prometheus-Metriken auf eigenem Port, ServiceMonitor und Alarmregeln, nächtlicher `pg_dump` als CronJob ([Betrieb](./betrieb.md#monitoring)).
+- **B8** Branding: Name, Akzentfarbe, Logo und Links (z. B. Hilfe, Datenschutzhinweise) unter „Verwaltung“.
+
+Bekannte Grenzen:
+
+- Die Suche findet Wortanfänge, keine Wortteile in der Mitte („antrag“ findet „Urlaubsantrag“ nicht) und keine Tippfehler.
+- Versionen zeigen Bilder in der Vorschau nur, solange das Bild noch in der Szene vorkommt.
+- Szenen lassen sich in der Übersicht nur innerhalb eines Workspaces verschieben; über die REST-API auch in Collections anderer Workspaces.
+- Das Audit-Log zeigt IDs von Szenen, nicht ihre Namen, wenn die Szene inzwischen gelöscht ist.
 
 ## Priorisierung
 

@@ -189,13 +189,13 @@ export const createMetrics = () => {
   );
   const jobRuns = counter(
     "excalidraw_job_runs_total",
-    "Runs of background jobs on this pod by job and result.",
+    "Runs of background jobs on this pod by task and result.",
   );
   const jobLastSuccess = new Map<string, number>();
   gauge(
     "excalidraw_job_last_success_timestamp_seconds",
     "Last successful run of a background job on this pod (unix seconds).",
-    () => [...jobLastSuccess].map(([job, at]) => [{ job }, at]),
+    () => [...jobLastSuccess].map(([task, at]) => [{ task }, at]),
   );
 
   const render = async () => {
@@ -225,7 +225,7 @@ export const createMetrics = () => {
       ),
     event: (type: string) => events.inc({ type }),
     job: (name: string, ok: boolean) => {
-      jobRuns.inc({ job: name, result: ok ? "ok" : "error" });
+      jobRuns.inc({ task: name, result: ok ? "ok" : "error" });
       if (ok) {
         jobLastSuccess.set(name, Date.now() / 1000);
       }

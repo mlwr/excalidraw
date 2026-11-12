@@ -43,6 +43,8 @@ Nur am Frontend arbeiten, ohne Server und Login: `VITE_APP_DISABLE_AUTH=true` in
 | Element-Logik für den Server | `yarn --cwd excalidraw-server build:elements` | – (läuft vor `dev`, `test`, `e2e` und `build` automatisch) |
 | Browser Ende-zu-Ende | `yarn --cwd excalidraw-server e2e` | `yarn build:app:docker`, `TEST_DATABASE_URL`, Chromium für Playwright |
 
+Hintergrundaufgaben (Suchindex, Papierkorb, Versionen, Fristen) starten Tests mit `built.jobs.run("<name>")`, statt auf den Zeitplan zu warten; Metriken liest `built.metrics.render()` oder `built.metrics.listen(host, 0)`.
+
 Die Server-Tests verwenden einen nachgebauten OpenID-Provider (`excalidraw-server/test/helpers/fakeOidc.ts`), der sich wie Keycloak verhält (Discovery, PKCE, Rollen in `realm_access`/`resource_access`, Back-Channel-Logout). Achtung: Die Tests leeren das Schema `public` der Testdatenbank.
 
 Die Browser-Tests spielen mehrere Personen durch:
@@ -51,6 +53,7 @@ Die Browser-Tests spielen mehrere Personen durch:
 - Workspace: Collection anlegen und an eine Keycloak-Gruppe freigeben, Szene gemeinsam live bearbeiten, Zugriff für Außenstehende verweigert, Nur-Lese-Link ohne Werkzeugleiste, Dashboard mit Vorschaubild und Live-Anzeige
 - eine lokale Zeichnung in den Workspace übernehmen
 - API-Token im Dashboard anlegen, per API ein Diagramm zeichnen, eine API-Änderung live in zwei offenen Editoren, ein Kommentar, den eine Person mit Leserecht live sieht und beantwortet
+- Suche in Texten einer Zeichnung, Papierkorb (löschen, wiederherstellen, endgültig löschen), Aktivität, Versionsverlauf mit Vorschau und Wiederherstellen, Verwaltung (Workspace mit Richtlinien anlegen, Branding, Audit-Log) und Wechsel zwischen Workspaces
 
 Sie schlagen fehl, sobald die App eine Anfrage außerhalb der eigenen Origin stellt, die Content-Security-Policy etwas blockiert oder im Browser ein Fehler auftritt.
 

@@ -56,6 +56,11 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            {{- end }}
           env:
             - name: PUBLIC_URL
               value: {{ required "publicUrl is required" .Values.publicUrl | quote }}
@@ -140,6 +145,20 @@ spec:
             {{- end }}
             - name: DATABASE_POOL_SIZE
               value: {{ .Values.database.poolSize | quote }}
+            - name: TRASH_RETENTION_DAYS
+              value: {{ .Values.retention.trashDays | quote }}
+            - name: VERSION_RETENTION_DAYS
+              value: {{ .Values.retention.versionDays | quote }}
+            - name: VERSION_INTERVAL_MINUTES
+              value: {{ .Values.retention.versionIntervalMinutes | quote }}
+            - name: AUDIT_RETENTION_DAYS
+              value: {{ .Values.retention.auditDays | quote }}
+            - name: VISIT_RETENTION_DAYS
+              value: {{ .Values.retention.visitDays | quote }}
+            - name: SEARCH_CONTENT
+              value: {{ .Values.search.content | quote }}
+            - name: METRICS_PORT
+              value: {{ ternary .Values.metrics.port 0 .Values.metrics.enabled | quote }}
             - name: STORAGE_DRIVER
               value: {{ .Values.storage.driver | quote }}
             {{- if eq .Values.storage.driver "s3" }}

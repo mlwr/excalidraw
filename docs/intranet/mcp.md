@@ -11,7 +11,7 @@ Der Server spricht das Model Context Protocol (MCP). KI-Assistenten, die MCP unt
 | Werkzeug | Zweck |
 | --- | --- |
 | `list_collections` | Collections mit Zugriff |
-| `search_scenes` | Szenen nach Namen suchen, neueste zuerst |
+| `search_scenes` | Szenen suchen: mit Suchbegriff in Namen, Texten der Zeichnungen und Kommentaren (mit Textausschnitt), sonst die neuesten Szenen |
 | `get_scene` | Szene lesen: Formen mit Beschriftung, Pfeile mit verbundenen Elementen, Texte, Rahmen |
 | `create_scene` | Leere Szene anlegen |
 | `create_diagram` | Diagramm aus Knoten und Kanten anordnen und zeichnen, in einer neuen oder vorhandenen Szene |

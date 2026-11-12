@@ -871,7 +871,7 @@ describeWithDb("operations (phase 4)", () => {
     );
     expect(text).toMatch(/excalidraw_events_total\{type="auth.login"\} 1/);
     expect(text).toMatch(
-      /excalidraw_job_runs_total\{job="search",result="ok"\} 1/,
+      /excalidraw_job_runs_total\{task="search",result="ok"\} 1/,
     );
     expect(text).toMatch(/excalidraw_users 1/);
     expect(text).toMatch(/excalidraw_scenes 1/);

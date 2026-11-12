@@ -157,6 +157,13 @@ Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. 
 | `API_TOKEN_LOGIN_MAX_AGE_DAYS` | `30` | Tokens gelten nur, wenn sich ihre Person in so vielen Tagen in der App angemeldet hat (Rollen und Gruppen stammen aus dieser Anmeldung); `0` = ohne Frist |
 | `API_REQUIRED_ROLE` | leer | Keycloak-Rolle, ohne die niemand Tokens anlegen oder benutzen darf; leer = alle (Admins dürfen immer) |
 | `API_RATE_LIMIT_PER_MINUTE` | `300` | Anfragen pro Token und Minute |
+| `TRASH_RETENTION_DAYS` | `30` | Tage im Papierkorb, bevor Szenen endgültig gelöscht werden (Vorgabe für neue Workspaces; jeder Workspace kann eine eigene Frist haben) |
+| `VERSION_RETENTION_DAYS` | `90` | Versionen von Szenen werden danach gelöscht |
+| `VERSION_INTERVAL_MINUTES` | `10` | Höchstens eine Version pro Szene in dieser Zeit (nach zwei Tagen bleibt eine pro Tag) |
+| `AUDIT_RETENTION_DAYS` | `365` | Aufbewahrung des Audit-Logs (Anmeldungen, Freigaben, Exporte, Verwaltung) |
+| `VISIT_RETENTION_DAYS` | `180` | Aufbewahrung von „Zuletzt geöffnet“ |
+| `SEARCH_CONTENT` | `true` | Texte in Zeichnungen und Kommentaren durchsuchbar machen (nur verschlüsselte Hashes in der Datenbank); `false` = nur Namen |
+| `METRICS_PORT` | `9464` | Port für Prometheus-Metriken (`/metrics`), getrennt vom App-Port; `0` = aus |
 | `TRUST_PROXY` | `1` | Vertrauenswürdige Proxy-Hops vor dem Pod |
 | `PORT`, `HOST` | `8080`, `0.0.0.0` | Adresse des Servers |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
@@ -165,8 +172,69 @@ Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. 
 ## 5. Laufender Betrieb
 
 - **Health**: `GET /healthz` (Prozess lebt), `GET /readyz` (Datenbank und Speicher erreichbar). Ein Ausfall von Keycloak nimmt Pods nicht aus dem Dienst; laufende Sitzungen arbeiten weiter, neue Anmeldungen schlagen fehl.
-- **Logs**: JSON-Zeilen auf stdout, Cookies und Authorization-Header werden geschwärzt.
-- **Backup**: PostgreSQL (`pg_dump`), bei `STORAGE_DRIVER=s3` zusätzlich der Bucket, und einmalig der `DATA_ENCRYPTION_KEY` an einem getrennten Ort. Nur alle drei zusammen ergeben eine lesbare Wiederherstellung; Dump und Bucket allein enthalten nur Chiffretext.
-- **Gelöschte Szenen** sind vorerst nur ausgeblendet (`deleted_at`) und bleiben in der Datenbank. Papierkorb und endgültiges Löschen folgen mit W5 und S3 in Phase 4. Gleiches gilt für gelöschte Kommentare.
-- **API-Tokens** einer Person widerrufen: Die Person selbst im Dashboard; im Notfall `update api_tokens set revoked_at = now() where user_id = '<id>';`.
+- **Logs**: JSON-Zeilen auf stdout, Cookies und Authorization-Header werden geschwärzt. Fachliche Ereignisse (Anmeldungen, Freigaben, Exporte, Verwaltung) stehen zusätzlich im Audit-Log der App.
+- **Verwaltung**: App-Admins (Keycloak-Rolle `excalidraw-admin`) öffnen `/admin` über „Verwaltung“ in der Übersicht: Workspaces mit Mitgliedern und Richtlinien, Personen (sperren, Tokens beenden, entfernen), Audit-Log mit CSV-Download, Branding und Kennzahlen. Workspace-Admins sehen dort nur ihre Workspaces.
+- **Hintergrundaufgaben** laufen in jedem Pod, aber dank PostgreSQL-Advisory-Locks jeweils nur in einem gleichzeitig: Suchindex (alle 20 s), Papierkorb leeren (stündlich), Versionen ausdünnen (stündlich), Fristen für Audit-Log, „Zuletzt geöffnet“, gelöschte Kommentare und abgelaufene Tokens (alle 6 h), abgelaufene Sitzungen (alle 15 min). Löschfristen siehe [Datenschutz](datenschutz.md).
+- **API-Tokens** einer Person beenden: die Person selbst im Dashboard, oder ein App-Admin unter „Verwaltung → Personen“.
 - **Updates**: Image-Tag erhöhen und `helm upgrade`; Migrationen laufen beim Start.
+
+### Monitoring
+
+Der Server liefert Prometheus-Metriken auf einem eigenen Port (`METRICS_PORT`, Standard 9464, Pfad `/metrics`), den das Ingress nicht nach außen gibt. Im Chart:
+
+```yaml
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true # braucht den Prometheus-Operator
+    labels:
+      release: prometheus
+  prometheusRule:
+    enabled: true # Alarme, s. u.
+networkPolicy:
+  enabled: true
+  monitoringNamespace: monitoring
+```
+
+| Metrik | Bedeutung |
+| --- | --- |
+| `excalidraw_http_request_duration_seconds` | Dauer der Anfragen nach Methode, Route (Muster, keine IDs) und Statusklasse |
+| `excalidraw_events_total{type}` | Anmeldungen, abgelehnte Anmeldungen, Bearbeitungen, Freigaben, Exporte, Verwaltungsaktionen |
+| `excalidraw_socket_connections` | Offene Live-Verbindungen pro Pod |
+| `excalidraw_db_pool_connections{state}` | Datenbankverbindungen pro Pod (`total`, `idle`, `waiting`) |
+| `excalidraw_job_runs_total{task,result}`, `excalidraw_job_last_success_timestamp_seconds{task}` | Hintergrundaufgaben |
+| `excalidraw_users`, `excalidraw_users_active_30d`, `excalidraw_scenes`, `excalidraw_scenes_trash`, `excalidraw_versions`, `excalidraw_scene_bytes`, `excalidraw_version_bytes` | Umfang der Installation (einmal pro Minute gezählt) |
+| `excalidraw_search_pending` | Szenen, die noch auf den Suchindex warten |
+| `process_*`, `nodejs_*` | Speicher, CPU, Verzögerung der Event-Loop |
+
+Die mitgelieferten Alarme (`prometheusRule.enabled`): Dienst nicht erreichbar, mehr als 5 % Serverfehler, langsame API (p95 > 2 s), wartende Datenbankverbindungen, Suchindex steht, Aufräumaufgaben laufen nicht (dann werden Löschfristen nicht eingehalten).
+
+### Backup und Wiederherstellung
+
+Was gesichert werden muss:
+
+1. **PostgreSQL**: Szenen, Kommentare, Versionen, Rechte, Audit-Log; bei `STORAGE_DRIVER=postgres` auch Bilder und Vorschaubilder.
+2. **S3-Bucket** (nur bei `STORAGE_DRIVER=s3`): Bilder und Vorschaubilder, am besten über Versionierung oder Replikation im S3-System.
+3. **`DATA_ENCRYPTION_KEY`**, einmalig und getrennt (z. B. im Passwort-Tresor des Betriebs). Datenbank und Bucket enthalten nur Chiffretext; ohne den Schlüssel ist ein Backup wertlos, mit ihm allein kommt niemand an Inhalte.
+
+Das Chart bringt einen nächtlichen `pg_dump` als CronJob mit, falls es keine zentrale Datenbanksicherung gibt:
+
+```yaml
+backup:
+  enabled: true
+  schedule: "30 2 * * *"
+  keep: 14 # Anzahl Dumps
+  storage: 20Gi # neues Volume, oder existingClaim: …
+```
+
+Die Dumps liegen im Format `pg_dump --format=custom` auf dem Volume (`excalidraw-JJJJMMTT-HHMMSS.dump`). `DATABASE_URL` muss dafür eine libpq-kompatible Adresse sein (z. B. `?sslmode=require`); die interne CA aus `extraCaCerts` wird genutzt.
+
+Wiederherstellen (Beispiel, Dienst vorher auf 0 Pods skalieren):
+
+```bash
+kubectl -n excalidraw scale deploy/excalidraw --replicas=0
+pg_restore --clean --if-exists --no-owner --dbname "$DATABASE_URL" excalidraw-20261112-023000.dump
+kubectl -n excalidraw scale deploy/excalidraw --replicas=2
+```
+
+Danach mit demselben `DATA_ENCRYPTION_KEY` starten. Wer ein Backup zurückspielt, stellt auch Inhalte wieder her, die nach dem Backup gelöscht wurden; das [Löschkonzept](datenschutz.md#backups) beschreibt, wie damit umzugehen ist.

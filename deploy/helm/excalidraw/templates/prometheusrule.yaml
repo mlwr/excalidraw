@@ -1,0 +1,65 @@
+{{- if and .Values.metrics.enabled .Values.metrics.prometheusRule.enabled }}
+{{- $job := include "excalidraw.fullname" . }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ $job }}
+  labels:
+    {{- include "excalidraw.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: excalidraw
+      rules:
+        - alert: ExcalidrawDown
+          expr: sum(up{job="{{ $job }}"}) == 0 or absent(up{job="{{ $job }}"})
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Excalidraw ist nicht erreichbar
+            description: Kein Pod von {{ $job }} liefert Metriken.
+        - alert: ExcalidrawServerErrors
+          expr: |
+            sum(rate(excalidraw_http_request_duration_seconds_count{job="{{ $job }}",status="5xx"}[5m]))
+              / sum(rate(excalidraw_http_request_duration_seconds_count{job="{{ $job }}"}[5m])) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Mehr als 5 % der Anfragen an Excalidraw scheitern mit 5xx
+        - alert: ExcalidrawSlow
+          expr: |
+            histogram_quantile(0.95, sum by (le) (rate(excalidraw_http_request_duration_seconds_bucket{job="{{ $job }}",route=~"/api/.*"}[10m]))) > 2
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: 95 % der API-Anfragen dauern länger als 2 Sekunden
+        - alert: ExcalidrawDatabasePoolExhausted
+          expr: max(excalidraw_db_pool_connections{job="{{ $job }}",state="waiting"}) > 5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Anfragen warten auf freie Datenbankverbindungen
+        - alert: ExcalidrawSearchIndexStale
+          expr: |
+            time() - max(excalidraw_job_last_success_timestamp_seconds{job="{{ $job }}",task="search"}) > 900
+              or max(excalidraw_search_pending{job="{{ $job }}"}) > 1000
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: Der Suchindex wird nicht mehr aktualisiert
+        - alert: ExcalidrawHousekeepingStale
+          expr: |
+            time() - max by (task) (excalidraw_job_last_success_timestamp_seconds{job="{{ $job }}",task=~"trash|versions|traces|sessions"}) > 13 * 3600
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Aufräumen ({{ "{{" }} $labels.task {{ "}}" }}) läuft nicht: Löschfristen werden nicht eingehalten"
+{{- end }}

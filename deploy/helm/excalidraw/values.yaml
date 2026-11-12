@@ -101,6 +101,57 @@ csp:
   frameAncestors: []
 
 # trusted reverse proxy hops in front of the pods (the ingress controller)
+# Deletion periods and history (S3 Löschkonzept, W5 trash, W7 versions)
+retention:
+  # days in the trash; default for new workspaces, each workspace can set
+  # its own on the admin page
+  trashDays: 30
+  # versions are deleted after this many days
+  versionDays: 90
+  # at most one version per scene within this many minutes
+  versionIntervalMinutes: 10
+  # audit log (logins, sharing, exports, admin actions)
+  auditDays: 365
+  # "recently opened" entries
+  visitDays: 180
+
+search:
+  # also index texts in drawings and comments (as keyed hashes, no plain
+  # words in the database); false = search scene names only
+  content: true
+
+# Prometheus metrics on a port of their own (not exposed by the ingress)
+metrics:
+  enabled: true
+  port: 9464
+  serviceMonitor:
+    # needs the Prometheus operator (monitoring.coreos.com CRDs)
+    enabled: false
+    interval: 30s
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+
+# Nightly pg_dump into a volume. Scenes, comments and versions stay
+# encrypted in the dump: back up the DATA_ENCRYPTION_KEY separately, a dump
+# without it cannot be read. With storage.driver=s3 back up the bucket too
+# (e.g. versioning or replication in the S3 system).
+backup:
+  enabled: false
+  schedule: "30 2 * * *"
+  image: postgres:16-alpine
+  # number of dumps to keep
+  keep: 14
+  # volume for the dumps: an existing claim or a new one of this size
+  existingClaim: ""
+  storage: 20Gi
+  storageClass: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
 trustProxy: "1"
 logLevel: info
 
@@ -177,6 +228,8 @@ networkPolicy:
   # restrict ingress to the ingress controller namespace
   enabled: false
   ingressControllerNamespace: ingress-nginx
+  # namespace of Prometheus, allowed to scrape the metrics port
+  monitoringNamespace: monitoring
 
 # Single-instance PostgreSQL for test environments only. Use a managed or
 # operator-run PostgreSQL (e.g. CloudNativePG) in production.
