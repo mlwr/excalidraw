@@ -263,7 +263,33 @@ export const createCommentService = (
   const one = async (actor: Actor, access: SceneAccess, threadId: string) =>
     (await threadsOf(actor, access, { threadId }))[0] || null;
 
-  const changed = (sceneId: string) => ctx.realtime.notifyComments(sceneId);
+  /** open editors reload the comments; the search index takes them up */
+  const changed = (sceneId: string) => {
+    ctx.realtime.notifyComments(sceneId);
+    ctx.search.markDirty(sceneId);
+  };
+
+  /** for the activity feed: who commented where (never the text) */
+  const log = (
+    type:
+      | "comment.created"
+      | "comment.replied"
+      | "comment.resolved"
+      | "comment.reopened"
+      | "comment.deleted",
+    actor: Actor,
+    access: SceneAccess,
+    threadId: string,
+  ) =>
+    ctx.events.record({
+      type,
+      actor: { id: actor.id, name: actor.name || "" },
+      workspaceId: access.scene.workspace_id,
+      collectionId: access.scene.collection_id,
+      sceneId: access.scene.id,
+      target: threadId,
+      data: { name: access.scene.name },
+    });
 
   const createThread = async (
     actor: Actor,
@@ -315,6 +341,7 @@ export const createCommentService = (
       return thread.id;
     });
     changed(access.scene.id);
+    log("comment.created", actor, access, threadId);
     return one(actor, access, threadId);
   };
 
@@ -344,6 +371,7 @@ export const createCommentService = (
         .execute();
     });
     changed(access.scene.id);
+    log("comment.replied", actor, access, thread.id);
     return one(actor, access, thread.id);
   };
 
@@ -373,6 +401,12 @@ export const createCommentService = (
       .where("id", "=", thread.id)
       .execute();
     changed(access.scene.id);
+    log(
+      resolved ? "comment.resolved" : "comment.reopened",
+      actor,
+      access,
+      thread.id,
+    );
     return one(actor, access, thread.id);
   };
 
@@ -461,6 +495,7 @@ export const createCommentService = (
       }
     });
     changed(access.scene.id);
+    log("comment.deleted", actor, access, thread.id);
   };
 
   /**

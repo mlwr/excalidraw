@@ -12,6 +12,7 @@ import { HttpError, sendError } from "../util/http.js";
 import { queryParam, searchText } from "../util/validate.js";
 import { actorOf } from "../workspace/access.js";
 import { cleanName } from "../workspace/service.js";
+import { policiesOf, resolveWorkspace } from "../workspace/workspaces.js";
 
 import { openApiDocument } from "./openapi.js";
 import {
@@ -27,6 +28,7 @@ import {
 import type { AppContext } from "../context.js";
 import type { CommentService, ThreadStatus } from "../workspace/comments.js";
 import type { WorkspaceService } from "../workspace/service.js";
+import type { Discovery } from "../workspace/discovery.js";
 import type { SceneOperations } from "./operations.js";
 import type {
   FastifyInstance,
@@ -179,6 +181,13 @@ export const registerTokenRoutes = (
         })
         .returningAll()
         .executeTakeFirstOrThrow();
+      ctx.events.record({
+        type: "token.created",
+        actor: user,
+        request,
+        target: row.id,
+        data: { name, scope, expiresInDays: days },
+      });
       reply.header("cache-control", "no-store");
       return reply.code(201).send({ token, ...describe(row) });
     },
@@ -202,6 +211,12 @@ export const registerTokenRoutes = (
       if (!revoked) {
         return sendError(reply, 404, "not_found");
       }
+      ctx.events.record({
+        type: "token.revoked",
+        actor: request.auth!.user,
+        request,
+        target: revoked.id,
+      });
       return reply.code(204).send();
     },
   );
@@ -325,6 +340,7 @@ export const registerApiRoutes = (
     workspace: WorkspaceService;
     operations: SceneOperations;
     comments: CommentService;
+    discovery: Discovery;
   },
   requireToken: preHandlerHookHandler,
 ) => {
@@ -589,4 +605,68 @@ export const registerApiRoutes = (
   );
 
   registerCommentRoutes(app, "/api/v1", options, services.comments);
+
+  /** names, texts in drawings and comments; all workspaces without ?workspace */
+  app.get("/api/v1/search", options, async (request) => {
+    const query = request.query as Record<string, unknown>;
+    const workspaceParam = queryParam(query.workspace);
+    const current = actor(request);
+    const workspaceId = workspaceParam
+      ? (await resolveWorkspace(ctx.db, current, workspaceParam)).workspace.id
+      : undefined;
+    return services.discovery.search(current, {
+      workspaceId,
+      query: queryParam(query.q) || "",
+      limit: 50,
+    });
+  });
+
+  /** ZIP of .excalidraw files: a workspace (?workspace) or a collection */
+  app.get(
+    "/api/v1/export",
+    { ...options, config: { rateLimit: { max: 6, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const query = request.query as Record<string, unknown>;
+      const current = actor(request);
+      const { workspace, access } = await resolveWorkspace(
+        ctx.db,
+        current,
+        queryParam(query.workspace),
+      );
+      if (
+        !policiesOf(workspace, {
+          trashRetentionDays: config.retention.trashDays,
+        }).export &&
+        access !== "admin"
+      ) {
+        throw new HttpError(
+          403,
+          "policy",
+          "In diesem Workspace dürfen nur Admins exportieren.",
+        );
+      }
+      const collectionId = queryParam(query.collection);
+      const items = await services.discovery.exportable(current, {
+        workspaceId: workspace.id,
+        collectionId,
+      });
+      const { count } = await services.discovery.sendZip(
+        reply,
+        current,
+        items,
+        `excalidraw-${workspace.slug}-${new Date()
+          .toISOString()
+          .slice(0, 10)}.zip`,
+      );
+      ctx.events.record({
+        type: "workspace.exported",
+        actor: request.auth!.user,
+        request,
+        workspaceId: workspace.id,
+        collectionId: collectionId ?? null,
+        data: { scenes: count, via: "api" },
+      });
+      return reply;
+    },
+  );
 };

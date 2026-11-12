@@ -97,6 +97,25 @@ export interface Config {
     /** requests per token and minute */
     rateLimitPerMinute: number;
   };
+  /** deletion periods (S3) */
+  retention: {
+    /** days a deleted scene stays in the trash (default of the policy) */
+    trashDays: number;
+    /** days versions of a scene are kept */
+    versionDays: number;
+    /** at most one automatic version per scene in this many minutes */
+    versionIntervalMinutes: number;
+    /** days the audit log (and activity feed) is kept */
+    auditDays: number;
+    /** days "recently opened" remembers a visit */
+    visitDays: number;
+  };
+  search: {
+    /** index texts in drawings and comments (keyed hashes), not only names */
+    content: boolean;
+  };
+  /** port for Prometheus metrics, not exposed via the ingress; 0 = off */
+  metricsPort: number;
   logLevel: string;
 }
 
@@ -350,6 +369,57 @@ export const loadConfig = (env: Env = process.env): Config => {
         ),
       ),
     },
+    retention: {
+      trashDays: Math.round(
+        parseNumber(
+          "TRASH_RETENTION_DAYS",
+          env.TRASH_RETENTION_DAYS,
+          30,
+          errors,
+        ),
+      ),
+      versionDays: Math.round(
+        parseNumber(
+          "VERSION_RETENTION_DAYS",
+          env.VERSION_RETENTION_DAYS,
+          90,
+          errors,
+        ),
+      ),
+      versionIntervalMinutes: Math.round(
+        parseNumber(
+          "VERSION_INTERVAL_MINUTES",
+          env.VERSION_INTERVAL_MINUTES,
+          10,
+          errors,
+        ),
+      ),
+      auditDays: Math.round(
+        parseNumber(
+          "AUDIT_RETENTION_DAYS",
+          env.AUDIT_RETENTION_DAYS,
+          365,
+          errors,
+        ),
+      ),
+      visitDays: Math.round(
+        parseNumber(
+          "VISIT_RETENTION_DAYS",
+          env.VISIT_RETENTION_DAYS,
+          180,
+          errors,
+        ),
+      ),
+    },
+    search: {
+      content: parseBool(env.SEARCH_CONTENT, true),
+    },
+    metricsPort:
+      env.METRICS_PORT !== undefined && env.METRICS_PORT.trim() === "0"
+        ? 0
+        : Math.round(
+            parseNumber("METRICS_PORT", env.METRICS_PORT, 9464, errors),
+          ),
     logLevel: env.LOG_LEVEL || "info",
   };
 

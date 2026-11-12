@@ -43,13 +43,30 @@ export interface Actor {
   id: string;
   groups: string[];
   isAdmin: boolean;
+  /** display name, for the activity feed and the audit log */
+  name?: string;
 }
 
 export const actorOf = (user: User): Actor => ({
   id: user.id,
   groups: user.groups,
   isAdmin: user.is_admin,
+  name: user.name,
 });
+
+/** admins of a workspace manage all of its team collections */
+const workspaceAdmin = async (
+  db: Kysely<Database>,
+  actor: Actor,
+  workspaceId: string,
+) =>
+  !!(await db
+    .selectFrom("workspace_members")
+    .select("role")
+    .where("workspace_id", "=", workspaceId)
+    .where("role", "=", "admin")
+    .where(grantMatches(actor))
+    .executeTakeFirst());
 
 /** SQL condition: a grant row (principal_type, principal) matches the actor */
 export const grantMatches = (actor: Actor): RawBuilder<boolean> =>
@@ -66,7 +83,10 @@ export const collectionRole = async (
   if (collection.kind === "personal") {
     return collection.owner_id === actor.id ? "manager" : "none";
   }
-  if (actor.isAdmin) {
+  if (
+    actor.isAdmin ||
+    (await workspaceAdmin(db, actor, collection.workspace_id))
+  ) {
     return "manager";
   }
   const grants = await db
@@ -97,6 +117,7 @@ export const SCENE_META_COLUMNS = [
   "key_sealed",
   "thumbnail_updated_at",
   "read_link_token",
+  "deleted_by",
 ] as const;
 
 export interface SceneAccess {
@@ -165,11 +186,16 @@ export const sceneAccess = async (
 };
 
 /** ids of the collections the actor can see, with their role */
+/**
+ * collections the actor can see, with their role; only those of one
+ * workspace if workspaceId is given
+ */
 export const accessibleCollections = async (
   db: Kysely<Database>,
   actor: Actor,
+  workspaceId?: string,
 ): Promise<{ collection: Collection; role: Role }[]> => {
-  const rows = await db
+  let query = db
     .selectFrom("collections")
     .selectAll()
     .where("deleted_at", "is", null)
@@ -180,20 +206,38 @@ export const accessibleCollections = async (
           eb("kind", "=", "team"),
           actor.isAdmin
             ? sql<boolean>`true`
-            : eb.exists(
-                eb
-                  .selectFrom("collection_grants")
-                  .select(sql`1`.as("one"))
-                  .whereRef(
-                    "collection_grants.collection_id",
-                    "=",
-                    "collections.id",
-                  )
-                  .where(grantMatches(actor)),
-              ),
+            : eb.or([
+                eb.exists(
+                  eb
+                    .selectFrom("collection_grants")
+                    .select(sql`1`.as("one"))
+                    .whereRef(
+                      "collection_grants.collection_id",
+                      "=",
+                      "collections.id",
+                    )
+                    .where(grantMatches(actor)),
+                ),
+                eb.exists(
+                  eb
+                    .selectFrom("workspace_members")
+                    .select(sql`1`.as("one"))
+                    .whereRef(
+                      "workspace_members.workspace_id",
+                      "=",
+                      "collections.workspace_id",
+                    )
+                    .where("workspace_members.role", "=", "admin")
+                    .where(grantMatches(actor)),
+                ),
+              ]),
         ]),
       ]),
-    )
+    );
+  if (workspaceId) {
+    query = query.where("workspace_id", "=", workspaceId);
+  }
+  const rows = await query
     .orderBy("kind", "asc")
     .orderBy("name", "asc")
     .execute();

@@ -64,6 +64,15 @@ export class PostgresBlobStore implements BlobStore {
     return row ? { data: row.data, contentType: row.content_type } : null;
   }
 
+  async deletePrefix(prefix: string): Promise<number> {
+    const pattern = `${prefix.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+    const result = await this.db
+      .deleteFrom("blobs")
+      .where("key", "like", pattern)
+      .executeTakeFirst();
+    return Number(result.numDeletedRows ?? 0);
+  }
+
   async check(): Promise<void> {
     await sql`select 1`.execute(this.db);
   }

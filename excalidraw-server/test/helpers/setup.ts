@@ -67,6 +67,7 @@ export const createTestEnv = async (
     OIDC_ALLOW_INSECURE_HTTP: "true",
     DATA_ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
     LOG_LEVEL: "warn",
+    METRICS_PORT: "0",
     ...env,
   });
   const built = await buildApp(config, { logger: false });

@@ -87,18 +87,29 @@ export const createWorkspaceService = (ctx: AppContext) => {
         .executeTakeFirstOrThrow()
     ).id;
 
-  const ensurePersonalCollection = async (userId: string) => {
+  /** the person who acts, for events */
+  const person = (actor: Actor) => ({ id: actor.id, name: actor.name || "" });
+
+  /** "Meine Szenen" of a person in a workspace (default workspace) */
+  const ensurePersonalCollection = async (
+    userId: string,
+    workspaceId?: string,
+  ) => {
+    const workspace = workspaceId || (await defaultWorkspaceId());
     await db
       .insertInto("collections")
       .values({
-        workspace_id: await defaultWorkspaceId(),
+        workspace_id: workspace,
         name: "Meine Szenen",
         kind: "personal",
         owner_id: userId,
         created_by: userId,
       })
       .onConflict((oc) =>
-        oc.column("owner_id").where("kind", "=", "personal").doNothing(),
+        oc
+          .columns(["workspace_id", "owner_id"])
+          .where("kind", "=", "personal")
+          .doNothing(),
       )
       .execute();
     return db
@@ -106,6 +117,7 @@ export const createWorkspaceService = (ctx: AppContext) => {
       .selectAll()
       .where("kind", "=", "personal")
       .where("owner_id", "=", userId)
+      .where("workspace_id", "=", workspace)
       .executeTakeFirstOrThrow();
   };
 
@@ -216,9 +228,9 @@ export const createWorkspaceService = (ctx: AppContext) => {
       ])
     )[0];
 
-  const listCollections = async (actor: Actor) => {
-    await ensurePersonalCollection(actor.id);
-    const collections = await accessibleCollections(db, actor);
+  const listCollections = async (actor: Actor, workspaceId?: string) => {
+    await ensurePersonalCollection(actor.id, workspaceId);
+    const collections = await accessibleCollections(db, actor, workspaceId);
     const counts = await db
       .selectFrom("scenes")
       .select(["collection_id", sql<number>`count(*)::int`.as("count")])
@@ -247,7 +259,11 @@ export const createWorkspaceService = (ctx: AppContext) => {
     actor: Actor,
     options: {
       collectionId?: string;
+      /** only this workspace (all workspaces without it) */
+      workspaceId?: string;
       query?: string;
+      /** search index hashes: scenes whose texts contain the query */
+      contentHashes?: string[] | null;
       sort?: SceneSort;
       limit: number;
       offset: number;
@@ -257,8 +273,8 @@ export const createWorkspaceService = (ctx: AppContext) => {
     if (options.collectionId) {
       accessible = [await collectionFor(actor, options.collectionId, "viewer")];
     } else {
-      await ensurePersonalCollection(actor.id);
-      accessible = await accessibleCollections(db, actor);
+      await ensurePersonalCollection(actor.id, options.workspaceId);
+      accessible = await accessibleCollections(db, actor, options.workspaceId);
     }
     const collectionRoles = new Map(
       accessible.map(({ collection, role }) => [collection.id, role]),
@@ -285,8 +301,28 @@ export const createWorkspaceService = (ctx: AppContext) => {
               ),
             ]),
       );
+    if (options.workspaceId) {
+      base = base.where("workspace_id", "=", options.workspaceId);
+    }
     if (options.query) {
-      base = base.where("name", "ilike", containsPattern(options.query));
+      const pattern = containsPattern(options.query);
+      const hashes = options.contentHashes;
+      base = base.where((eb) =>
+        hashes?.length
+          ? eb.or([
+              eb("name", "ilike", pattern),
+              eb.exists(
+                eb
+                  .selectFrom("scene_search")
+                  .select(sql`1`.as("one"))
+                  .whereRef("scene_search.scene_id", "=", "scenes.id")
+                  .where(
+                    sql<boolean>`scene_search.tokens @> ${hashes}::bigint[]`,
+                  ),
+              ),
+            ])
+          : eb("name", "ilike", pattern),
+      );
     }
     const { total } = await base
       .select(sql<number>`count(*)::int`.as("total"))
@@ -379,6 +415,14 @@ export const createWorkspaceService = (ctx: AppContext) => {
       })
       .returningAll()
       .executeTakeFirstOrThrow();
+    ctx.events.record({
+      type: "scene.created",
+      actor: person(actor),
+      workspaceId: scene.workspace_id,
+      collectionId: scene.collection_id,
+      sceneId: scene.id,
+      data: { name: scene.name, via: "api" },
+    });
     return { scene, key, collection };
   };
 
@@ -388,7 +432,11 @@ export const createWorkspaceService = (ctx: AppContext) => {
     input: { name?: unknown; collectionId?: unknown },
   ) => {
     const access = await sceneFor(actor, sceneId, "editor");
-    const changes: { name?: string; collection_id?: string } = {};
+    const changes: {
+      name?: string;
+      collection_id?: string;
+      workspace_id?: string;
+    } = {};
     if (input.name !== undefined) {
       const name = cleanName(input.name);
       if (!name) {
@@ -406,6 +454,7 @@ export const createWorkspaceService = (ctx: AppContext) => {
         "editor",
       );
       changes.collection_id = target.collection.id;
+      changes.workspace_id = target.collection.workspace_id;
     }
     if (!Object.keys(changes).length) {
       throw new HttpError(400, "nothing_to_change", "Nichts zu ändern.");
@@ -420,6 +469,29 @@ export const createWorkspaceService = (ctx: AppContext) => {
       changes.collection_id !== access.scene.collection_id
     ) {
       await ctx.realtime.recheckScenes([access.scene.id]).catch(() => {});
+      ctx.events.record({
+        type: "scene.moved",
+        actor: person(actor),
+        workspaceId: changes.workspace_id,
+        collectionId: changes.collection_id,
+        sceneId: access.scene.id,
+        data: {
+          name: changes.name || access.scene.name,
+          from: access.collection.name,
+          fromCollectionId: access.collection.id,
+          via: "api",
+        },
+      });
+    }
+    if (changes.name && changes.name !== access.scene.name) {
+      ctx.events.record({
+        type: "scene.renamed",
+        actor: person(actor),
+        workspaceId: access.scene.workspace_id,
+        collectionId: access.scene.collection_id,
+        sceneId: access.scene.id,
+        data: { name: changes.name, before: access.scene.name, via: "api" },
+      });
     }
     return describeAccess(await sceneFor(actor, sceneId, "viewer"));
   };
@@ -431,10 +503,18 @@ export const createWorkspaceService = (ctx: AppContext) => {
     }
     await db
       .updateTable("scenes")
-      .set({ deleted_at: sql`now()` })
+      .set({ deleted_at: sql`now()`, deleted_by: actor.id })
       .where("id", "=", access.scene.id)
       .execute();
     ctx.realtime.closeSceneRoom(access.scene.id);
+    ctx.events.record({
+      type: "scene.deleted",
+      actor: person(actor),
+      workspaceId: access.scene.workspace_id,
+      collectionId: access.scene.collection_id,
+      sceneId: access.scene.id,
+      data: { name: access.scene.name, via: "api" },
+    });
   };
 
   const keyOf = (scene: SceneMeta) => openSceneKey(masterKey, scene.key_sealed);
@@ -496,6 +576,7 @@ export const createWorkspaceService = (ctx: AppContext) => {
         throw new HttpError(413, "scene_too_large", "Die Szene ist zu groß.");
       }
       const { iv, data } = encryptElements(key, result.elements);
+      await ctx.lifecycle.keepVersion(access.scene.id);
       const updated = await db
         .updateTable("scenes")
         .set({
@@ -514,6 +595,13 @@ export const createWorkspaceService = (ctx: AppContext) => {
         continue;
       }
       ctx.realtime.broadcastSceneUpdate(access.scene.id, key, result.changed);
+      ctx.events.recordEdit({
+        actor: person(actor),
+        workspaceId: access.scene.workspace_id,
+        collectionId: access.scene.collection_id,
+        sceneId: access.scene.id,
+        data: { name: access.scene.name, via: "api" },
+      });
       return { ...result, revision: Number(updated.revision) };
     }
     throw new HttpError(

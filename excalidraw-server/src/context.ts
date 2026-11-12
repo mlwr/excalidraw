@@ -3,6 +3,9 @@ import type { AuthContext, SessionStore } from "./auth/sessions.js";
 import type { Config } from "./config.js";
 import type { Database } from "./db/schema.js";
 import type { BlobStore } from "./storage/index.js";
+import type { EventLog } from "./events.js";
+import type { Lifecycle } from "./workspace/lifecycle.js";
+import type { Search } from "./workspace/search.js";
 import type { Kysely } from "kysely";
 
 export interface RealtimeHooks {
@@ -38,6 +41,12 @@ export interface AppContext {
   oidc: OidcClient;
   blobs: BlobStore;
   realtime: RealtimeHooks;
+  /** activity feed and audit log */
+  events: EventLog;
+  /** versions, trash, deletion periods */
+  lifecycle: Lifecycle;
+  /** search index */
+  search: Search;
 }
 
 declare module "fastify" {

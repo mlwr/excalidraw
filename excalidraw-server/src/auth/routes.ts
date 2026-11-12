@@ -252,6 +252,13 @@ export const registerAuth = (app: FastifyInstance, ctx: AppContext) => {
             .where("revoked_at", "is", null)
             .execute();
         }
+        ctx.events.record({
+          type: "auth.login_denied",
+          actor: known ? { id: known.id, name: identity.name } : null,
+          request,
+          target: identity.username || identity.subject,
+          data: { reason: "required_role" },
+        });
         return sendHtmlError(
           reply,
           403,
@@ -302,6 +309,7 @@ export const registerAuth = (app: FastifyInstance, ctx: AppContext) => {
         idToken: result.idToken || null,
         userAgent: request.headers["user-agent"] || null,
       });
+      ctx.events.record({ type: "auth.login", actor: user, request });
 
       reply.setCookie(cookieName, token, {
         path: "/",
@@ -341,6 +349,11 @@ export const registerAuth = (app: FastifyInstance, ctx: AppContext) => {
       return { redirectUrl: "/" };
     }
     ctx.realtime.disconnectSessions([session.id]);
+    ctx.events.record({
+      type: "auth.logout",
+      actor: request.auth?.user ?? { id: session.user_id, name: "" },
+      request,
+    });
 
     let redirectUrl = "/";
     try {

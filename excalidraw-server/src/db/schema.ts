@@ -18,6 +18,11 @@ export interface UsersTable {
     Date | string | null,
     Date | string | null
   >;
+  erased_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
   disabled_at: ColumnType<
     Date | null,
     Date | string | null,
@@ -52,6 +57,31 @@ export interface WorkspacesTable {
   id: Generated<string>;
   slug: string;
   name: string;
+  created_at: Timestamp;
+  /** everybody who may use the app is a member (the default workspace) */
+  open_to_all: ColumnType<boolean, boolean | undefined, boolean>;
+  /** policies, see workspace/policies.ts */
+  settings: ColumnType<
+    Record<string, unknown>,
+    Record<string, unknown> | undefined,
+    Record<string, unknown>
+  >;
+  created_by: string | null;
+  deleted_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+}
+
+export type WorkspaceRole = "member" | "admin";
+
+export interface WorkspaceMembersTable {
+  workspace_id: string;
+  principal_type: PrincipalType;
+  principal: string;
+  role: WorkspaceRole;
+  created_by: string | null;
   created_at: Timestamp;
 }
 
@@ -143,6 +173,7 @@ export interface ScenesTable {
     Date | string | null
   >;
   read_link_token: string | null;
+  deleted_by: string | null;
 }
 
 export interface SceneGrantsTable {
@@ -231,6 +262,61 @@ export interface CommentsTable {
   >;
 }
 
+export interface SceneVersionsTable {
+  id: Generated<string>;
+  scene_id: string;
+  created_at: Timestamp;
+  taken_at: Timestamp;
+  created_by: string | null;
+  revision: ColumnType<string, number | string, number | string>;
+  scene_version: ColumnType<string, number | string, number | string>;
+  iv: Buffer;
+  ciphertext: Buffer;
+  size: number;
+  reason: ColumnType<
+    "auto" | "restore" | "import",
+    "auto" | "restore" | "import" | undefined,
+    "auto" | "restore" | "import"
+  >;
+}
+
+export interface SceneSearchTable {
+  scene_id: string;
+  tokens: ColumnType<string[], string[] | undefined, string[]>;
+  indexed_revision: ColumnType<
+    string,
+    number | string | undefined,
+    number | string
+  >;
+  indexed_at: Timestamp;
+}
+
+export interface EventsTable {
+  id: Generated<string>;
+  at: Timestamp;
+  actor_id: string | null;
+  actor_name: string | null;
+  type: string;
+  workspace_id: string | null;
+  collection_id: string | null;
+  scene_id: string | null;
+  target: string | null;
+  data: ColumnType<
+    Record<string, unknown>,
+    Record<string, unknown> | undefined,
+    Record<string, unknown>
+  >;
+  ip: string | null;
+  user_agent: string | null;
+}
+
+export interface SettingsTable {
+  key: string;
+  value: unknown;
+  updated_at: Timestamp;
+  updated_by: string | null;
+}
+
 export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
@@ -248,6 +334,11 @@ export interface Database {
   api_tokens: ApiTokensTable;
   comment_threads: CommentThreadsTable;
   comments: CommentsTable;
+  workspace_members: WorkspaceMembersTable;
+  scene_versions: SceneVersionsTable;
+  scene_search: SceneSearchTable;
+  events: EventsTable;
+  settings: SettingsTable;
 }
 
 export type User = Selectable<UsersTable>;
@@ -258,3 +349,6 @@ export type Scene = Selectable<ScenesTable>;
 export type ApiToken = Selectable<ApiTokensTable>;
 export type CommentThread = Selectable<CommentThreadsTable>;
 export type Comment = Selectable<CommentsTable>;
+export type Workspace = Selectable<WorkspacesTable>;
+export type SceneVersion = Selectable<SceneVersionsTable>;
+export type EventRow = Selectable<EventsTable>;

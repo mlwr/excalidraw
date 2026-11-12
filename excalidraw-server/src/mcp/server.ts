@@ -25,6 +25,7 @@ import type { SceneOperations } from "../api/operations.js";
 import type { AuthContext } from "../auth/sessions.js";
 import type { AppContext } from "../context.js";
 import type { CommentService } from "../workspace/comments.js";
+import type { Discovery } from "../workspace/discovery.js";
 import type { WorkspaceService } from "../workspace/service.js";
 import type {
   FastifyInstance,
@@ -157,6 +158,7 @@ export const createMcpServer = (
     workspace: WorkspaceService;
     operations: SceneOperations;
     comments: CommentService;
+    discovery: Discovery;
   },
   auth: AuthContext,
   log: (error: unknown) => void,
@@ -223,7 +225,7 @@ export const createMcpServer = (
     {
       title: "Search scenes",
       description:
-        "Find scenes (drawings) by name, newest first. Without query: the most recently changed scenes.",
+        "Find scenes (drawings) by name, texts in the drawing and comments, newest first; results say where the words occur. Without query: the most recently changed scenes.",
       inputSchema: {
         query: z.string().optional(),
         collectionId: z.string().optional(),
@@ -234,12 +236,17 @@ export const createMcpServer = (
     tool(
       false,
       async (args: { query?: string; collectionId?: string; limit?: number }) =>
-        workspace.listScenes(actor, {
-          query: searchText(args.query) || undefined,
-          collectionId: args.collectionId,
-          limit: args.limit ?? 20,
-          offset: 0,
-        }),
+        searchText(args.query).length >= 2 && !args.collectionId
+          ? services.discovery.search(actor, {
+              query: searchText(args.query),
+              limit: args.limit ?? 20,
+            })
+          : workspace.listScenes(actor, {
+              query: searchText(args.query) || undefined,
+              collectionId: args.collectionId,
+              limit: args.limit ?? 20,
+              offset: 0,
+            }),
     ) as Tool,
   );
 
@@ -548,6 +555,7 @@ export const registerMcp = (
     workspace: WorkspaceService;
     operations: SceneOperations;
     comments: CommentService;
+    discovery: Discovery;
   },
   requireToken: preHandlerHookHandler,
 ) => {

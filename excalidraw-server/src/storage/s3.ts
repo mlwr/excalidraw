@@ -3,6 +3,14 @@ import { AwsClient } from "aws4fetch";
 import type { S3Config } from "../config.js";
 import type { BlobStore, StoredBlob } from "./index.js";
 
+const decodeXml = (value: string) =>
+  value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+
 /**
  * Optional driver for any S3-compatible object storage (Ceph RGW, MinIO,
  * NetApp StorageGRID, ...). Uses plain signed HTTP requests, no AWS SDK.
@@ -102,6 +110,54 @@ export class S3BlobStore implements BlobStore {
       data: Buffer.from(await response.arrayBuffer()),
       contentType: response.headers.get("content-type"),
     };
+  }
+
+  async deletePrefix(prefix: string): Promise<number> {
+    const fullPrefix = this.s3.prefix ? `${this.s3.prefix}/${prefix}` : prefix;
+    let deleted = 0;
+    let token: string | null = null;
+    do {
+      const params = new URLSearchParams({
+        "list-type": "2",
+        prefix: fullPrefix,
+      });
+      if (token) {
+        params.set("continuation-token", token);
+      }
+      const response = await this.client.fetch(`${this.bucketUrl()}?${params}`);
+      if (!response.ok) {
+        throw new Error(
+          `S3 LIST ${prefix} failed with status ${response.status}`,
+        );
+      }
+      const xml = await response.text();
+      const keys = [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map((match) =>
+        decodeXml(match[1]),
+      );
+      for (const key of keys) {
+        const encoded = key.split("/").map(encodeURIComponent).join("/");
+        const removed = await this.client.fetch(
+          `${this.bucketUrl()}/${encoded}`,
+          {
+            method: "DELETE",
+          },
+        );
+        if (!removed.ok && removed.status !== 404) {
+          throw new Error(
+            `S3 DELETE ${key} failed with status ${removed.status}`,
+          );
+        }
+        deleted++;
+      }
+      token = /<IsTruncated>true<\/IsTruncated>/.test(xml)
+        ? decodeXml(
+            /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(
+              xml,
+            )?.[1] || "",
+          ) || null
+        : null;
+    } while (token);
+    return deleted;
   }
 
   async check(): Promise<void> {

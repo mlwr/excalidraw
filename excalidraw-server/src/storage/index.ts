@@ -29,6 +29,8 @@ export interface BlobStore {
     meta: { contentType: string | null; createdBy: string | null },
   ): Promise<void>;
   get(key: string): Promise<StoredBlob | null>;
+  /** delete every object whose key starts with prefix (purging scenes) */
+  deletePrefix(prefix: string): Promise<number>;
   /** cheap reachability check for readiness probes */
   check(): Promise<void>;
 }

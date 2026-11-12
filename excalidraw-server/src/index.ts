@@ -50,6 +50,10 @@ const main = async () => {
   process.on("SIGINT", () => void shutdown("SIGINT"));
 
   await app.listen({ host: config.host, port: config.port });
+  if (config.metricsPort > 0) {
+    await built.metrics.listen(config.host, config.metricsPort);
+    app.log.info({ port: config.metricsPort }, "metrics listening on /metrics");
+  }
 
   // warm up OIDC discovery; failures are logged and retried on first login
   built.ctx.oidc.ready().catch((error) => {

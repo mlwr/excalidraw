@@ -646,7 +646,7 @@ describeWithDb("REST API, comments and MCP", () => {
         arguments: { query: "Urlaub" },
       }),
     );
-    expect(found.scenes.map((s: { id: string }) => s.id)).toEqual([
+    expect(found.results.map((s: { id: string }) => s.id)).toEqual([
       diagram.scene.id,
     ]);
 

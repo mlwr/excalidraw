@@ -27,10 +27,22 @@ import {
   SCENE_META_COLUMNS,
   sceneAccess,
 } from "./access.js";
+import {
+  atLeastWorkspace,
+  listWorkspaces,
+  policiesOf,
+  resolveWorkspace,
+} from "./workspaces.js";
 
 import type { AppContext } from "../context.js";
-import type { Collection, GrantRole, PrincipalType } from "../db/schema.js";
+import type {
+  Collection,
+  GrantRole,
+  PrincipalType,
+  Workspace,
+} from "../db/schema.js";
 import type { Actor, Role, SceneMeta } from "./access.js";
+import type { WorkspaceAccess } from "./workspaces.js";
 import type {
   FastifyInstance,
   FastifyReply,
@@ -122,27 +134,25 @@ export const registerWorkspaceRoutes = (
 
   const actor = (request: FastifyRequest): Actor => actorOf(request.auth!.user);
 
-  const defaultWorkspaceId = async () =>
-    (
-      await db
-        .selectFrom("workspaces")
-        .select("id")
-        .where("slug", "=", "default")
-        .executeTakeFirstOrThrow()
-    ).id;
-
-  const ensurePersonalCollection = async (userId: string) => {
+  /** "Meine Szenen": one per person and workspace */
+  const ensurePersonalCollection = async (
+    userId: string,
+    workspaceId: string,
+  ) => {
     await db
       .insertInto("collections")
       .values({
-        workspace_id: await defaultWorkspaceId(),
+        workspace_id: workspaceId,
         name: "Meine Szenen",
         kind: "personal",
         owner_id: userId,
         created_by: userId,
       })
       .onConflict((oc) =>
-        oc.column("owner_id").where("kind", "=", "personal").doNothing(),
+        oc
+          .columns(["workspace_id", "owner_id"])
+          .where("kind", "=", "personal")
+          .doNothing(),
       )
       .execute();
     return db
@@ -150,8 +160,34 @@ export const registerWorkspaceRoutes = (
       .selectAll()
       .where("kind", "=", "personal")
       .where("owner_id", "=", userId)
+      .where("workspace_id", "=", workspaceId)
       .executeTakeFirstOrThrow();
   };
+
+  /** the workspace a request is about (?workspace=…), default otherwise */
+  const workspaceOf = (
+    request: FastifyRequest,
+    minimum: WorkspaceAccess = "guest",
+    value: unknown = (request.query as Record<string, unknown>)?.workspace,
+  ) =>
+    resolveWorkspace(
+      db,
+      actor(request),
+      typeof value === "string" || value === undefined
+        ? value
+        : queryParam(value),
+      minimum,
+    );
+
+  const policies = (workspace: Pick<Workspace, "settings">) =>
+    policiesOf(workspace, { trashRetentionDays: config.retention.trashDays });
+
+  const workspaceById = (id: string) =>
+    db
+      .selectFrom("workspaces")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
 
   // --- presence: who is in which scene right now ------------------------------
 
@@ -370,8 +406,15 @@ export const registerWorkspaceRoutes = (
   // ---------------------------------------------------------------------------
 
   app.get("/api/workspace", { preHandler: requireAuth }, async (request) => {
-    await ensurePersonalCollection(request.auth!.user.id);
-    const collections = await accessibleCollections(db, actor(request));
+    const { workspace, access } = await workspaceOf(request);
+    if (atLeastWorkspace(access, "member")) {
+      await ensurePersonalCollection(request.auth!.user.id, workspace.id);
+    }
+    const collections = await accessibleCollections(
+      db,
+      actor(request),
+      workspace.id,
+    );
     const counts = collections.length
       ? await db
           .selectFrom("scenes")
@@ -388,7 +431,21 @@ export const registerWorkspaceRoutes = (
     const countMap = new Map(
       counts.map((row) => [row.collection_id, row.count]),
     );
+    const workspaces = await listWorkspaces(db, actor(request));
     return {
+      workspace: {
+        id: workspace.id,
+        slug: workspace.slug,
+        name: workspace.name,
+        access,
+        policies: policies(workspace),
+      },
+      workspaces: workspaces.map((item) => ({
+        id: item.workspace.id,
+        slug: item.workspace.slug,
+        name: item.workspace.name,
+        access: item.access,
+      })),
       collections: collections.map(({ collection, role }) => ({
         id: collection.id,
         name: collection.name,
@@ -417,11 +474,27 @@ export const registerWorkspaceRoutes = (
         );
       }
       const userId = request.auth!.user.id;
+      const { workspace, access } = await workspaceOf(
+        request,
+        "member",
+        (request.body as Record<string, unknown>)?.workspaceId,
+      );
+      if (
+        policies(workspace).collectionCreation === "admins" &&
+        access !== "admin"
+      ) {
+        return sendError(
+          reply,
+          403,
+          "forbidden",
+          "In diesem Workspace legen nur Admins Collections an.",
+        );
+      }
       const collection = await db.transaction().execute(async (trx) => {
         const created = await trx
           .insertInto("collections")
           .values({
-            workspace_id: await defaultWorkspaceId(),
+            workspace_id: workspace.id,
             name,
             kind: "team",
             created_by: userId,
@@ -439,6 +512,14 @@ export const registerWorkspaceRoutes = (
           })
           .execute();
         return created;
+      });
+      ctx.events.record({
+        type: "collection.created",
+        actor: request.auth!.user,
+        request,
+        workspaceId: workspace.id,
+        collectionId: collection.id,
+        data: { name },
       });
       return reply.code(201).send({
         id: collection.id,
@@ -480,6 +561,14 @@ export const registerWorkspaceRoutes = (
         .set({ name, updated_at: sql`now()` })
         .where("id", "=", loaded.collection.id)
         .execute();
+      ctx.events.record({
+        type: "collection.renamed",
+        actor: request.auth!.user,
+        request,
+        workspaceId: loaded.collection.workspace_id,
+        collectionId: loaded.collection.id,
+        data: { name, before: loaded.collection.name },
+      });
       return { id: loaded.collection.id, name };
     },
   );
@@ -519,6 +608,14 @@ export const registerWorkspaceRoutes = (
         .set({ deleted_at: sql`now()` })
         .where("id", "=", loaded.collection.id)
         .execute();
+      ctx.events.record({
+        type: "collection.deleted",
+        actor: request.auth!.user,
+        request,
+        workspaceId: loaded.collection.workspace_id,
+        collectionId: loaded.collection.id,
+        data: { name: loaded.collection.name },
+      });
       return reply.code(204).send();
     },
   );
@@ -611,6 +708,19 @@ export const registerWorkspaceRoutes = (
         .where("deleted_at", "is", null)
         .execute();
       recheckLiveAccess(scenes.map((scene) => scene.id));
+      ctx.events.record({
+        type: "collection.grants",
+        actor: request.auth!.user,
+        request,
+        workspaceId: loaded.collection.workspace_id,
+        collectionId: loaded.collection.id,
+        data: {
+          name: loaded.collection.name,
+          grants: grants.map(
+            (grant) => `${grant.type}:${grant.principal}:${grant.role}`,
+          ),
+        },
+      });
       return { ok: true };
     },
   );
@@ -641,11 +751,13 @@ export const registerWorkspaceRoutes = (
       let scenes: SceneMeta[] = [];
       const access = new Map<string, { role: Role; canManage: boolean }>();
       const collectionId = queryParam(query.collection);
+      const view = queryParam(query.view);
       const mode = collectionId
         ? "collection"
-        : queryParam(query.view) === "shared"
-        ? "shared"
+        : view === "shared" || view === "trash"
+        ? view
         : "recent";
+      const { workspace } = await workspaceOf(request);
 
       if (mode === "collection" && collectionId) {
         const loaded = await loadCollection(
@@ -682,6 +794,7 @@ export const registerWorkspaceRoutes = (
           .selectFrom("scenes")
           .select(SCENE_META_COLUMNS)
           .where("deleted_at", "is", null)
+          .where("workspace_id", "=", workspace.id)
           .where((eb) =>
             eb.exists(
               eb
@@ -707,6 +820,46 @@ export const registerWorkspaceRoutes = (
             });
           }
         }
+      } else if (mode === "trash") {
+        // deleted scenes I may restore: I manage their collection, or I
+        // deleted them
+        let builder = db
+          .selectFrom("scenes")
+          .select(SCENE_META_COLUMNS)
+          .where("workspace_id", "=", workspace.id)
+          .where("deleted_at", "is not", null);
+        if (search) {
+          builder = builder.where("name", "ilike", containsPattern(search));
+        }
+        const deleted = await builder
+          .orderBy("deleted_at", "desc")
+          .limit(500)
+          .execute();
+        const roles = new Map<string, Role>();
+        for (const scene of deleted) {
+          if (!roles.has(scene.collection_id)) {
+            const collection = await db
+              .selectFrom("collections")
+              .selectAll()
+              .where("id", "=", scene.collection_id)
+              .executeTakeFirst();
+            roles.set(
+              scene.collection_id,
+              collection
+                ? await collectionRole(db, current, {
+                    ...collection,
+                    // a deleted collection still decides who may restore
+                    deleted_at: null,
+                  })
+                : "none",
+            );
+          }
+          const manages = atLeast(roles.get(scene.collection_id)!, "editor");
+          if (manages || scene.deleted_by === current.id) {
+            scenes.push(scene);
+            access.set(scene.id, { role: "editor", canManage: manages });
+          }
+        }
       } else {
         // recently visited by me
         const visited = await db
@@ -716,6 +869,7 @@ export const registerWorkspaceRoutes = (
             SCENE_META_COLUMNS.map((column) => `scenes.${column}` as const),
           )
           .where("scene_visits.user_id", "=", current.id)
+          .where("scenes.workspace_id", "=", workspace.id)
           .where("scenes.deleted_at", "is", null)
           .orderBy("scene_visits.visited_at", "desc")
           .limit(30)
@@ -738,7 +892,7 @@ export const registerWorkspaceRoutes = (
           : allowed;
       }
 
-      if (mode !== "recent") {
+      if (mode !== "recent" && mode !== "trash") {
         scenes.sort((a, b) => {
           if (sort === "name") {
             return a.name.localeCompare(b.name, "de");
@@ -751,12 +905,28 @@ export const registerWorkspaceRoutes = (
       const collections = await collectionsById(
         scenes.map((scene) => scene.collection_id),
       );
-      return {
-        scenes: await sceneSummaries(scenes, collections, {
-          withPresence: true,
-          access,
-        }),
-      };
+      const summaries = await sceneSummaries(scenes, collections, {
+        withPresence: mode !== "trash",
+        access,
+      });
+      if (mode === "trash") {
+        const days = policies(workspace).trashRetentionDays;
+        const names = await userNames(scenes.map((scene) => scene.deleted_by));
+        return {
+          scenes: summaries.map((summary, index) => {
+            const deletedAt = new Date(scenes[index].deleted_at!);
+            return {
+              ...summary,
+              deletedAt,
+              deletedBy: scenes[index].deleted_by
+                ? names.get(scenes[index].deleted_by!) || null
+                : null,
+              purgeAt: new Date(deletedAt.getTime() + days * 24 * 3600 * 1000),
+            };
+          }),
+        };
+      }
+      return { scenes: summaries };
     },
   );
 
@@ -775,7 +945,14 @@ export const registerWorkspaceRoutes = (
       let collectionId =
         typeof body.collectionId === "string" ? body.collectionId : null;
       if (!collectionId) {
-        collectionId = (await ensurePersonalCollection(userId)).id;
+        // "Meine Szenen" of the workspace the dashboard shows
+        const { workspace } = await workspaceOf(
+          request,
+          "member",
+          body.workspaceId,
+        );
+        collectionId = (await ensurePersonalCollection(userId, workspace.id))
+          .id;
       }
       const loaded = await loadCollection(
         actor(request),
@@ -806,6 +983,16 @@ export const registerWorkspaceRoutes = (
         .insertInto("scene_visits")
         .values({ user_id: userId, scene_id: scene.id })
         .execute();
+
+      ctx.events.record({
+        type: "scene.created",
+        actor: request.auth!.user,
+        request,
+        workspaceId: scene.workspace_id,
+        collectionId: scene.collection_id,
+        sceneId: scene.id,
+        data: { name },
+      });
 
       const [summary] = await sceneSummaries(
         [scene],
@@ -857,7 +1044,11 @@ export const registerWorkspaceRoutes = (
       if (!access) {
         return;
       }
-      const changes: { name?: string; collection_id?: string } = {};
+      const changes: {
+        name?: string;
+        collection_id?: string;
+        workspace_id?: string;
+      } = {};
 
       if (body.name !== undefined) {
         const name = cleanName(body.name);
@@ -891,6 +1082,7 @@ export const registerWorkspaceRoutes = (
           return;
         }
         changes.collection_id = target.collection.id;
+        changes.workspace_id = target.collection.workspace_id;
       }
 
       if (!Object.keys(changes).length) {
@@ -906,6 +1098,30 @@ export const registerWorkspaceRoutes = (
         changes.collection_id !== access.scene.collection_id
       ) {
         recheckLiveAccess([access.scene.id]);
+        ctx.events.record({
+          type: "scene.moved",
+          actor: request.auth!.user,
+          request,
+          workspaceId: changes.workspace_id,
+          collectionId: changes.collection_id,
+          sceneId: access.scene.id,
+          data: {
+            name: changes.name || access.scene.name,
+            from: access.collection.name,
+            fromCollectionId: access.collection.id,
+          },
+        });
+      }
+      if (changes.name && changes.name !== access.scene.name) {
+        ctx.events.record({
+          type: "scene.renamed",
+          actor: request.auth!.user,
+          request,
+          workspaceId: access.scene.workspace_id,
+          collectionId: access.scene.collection_id,
+          sceneId: access.scene.id,
+          data: { name: changes.name, before: access.scene.name },
+        });
       }
       return { ok: true };
     },
@@ -929,10 +1145,19 @@ export const registerWorkspaceRoutes = (
       }
       await db
         .updateTable("scenes")
-        .set({ deleted_at: sql`now()` })
+        .set({ deleted_at: sql`now()`, deleted_by: request.auth!.user.id })
         .where("id", "=", access.scene.id)
         .execute();
       ctx.realtime.closeSceneRoom(access.scene.id);
+      ctx.events.record({
+        type: "scene.deleted",
+        actor: request.auth!.user,
+        request,
+        workspaceId: access.scene.workspace_id,
+        collectionId: access.scene.collection_id,
+        sceneId: access.scene.id,
+        data: { name: access.scene.name },
+      });
       return reply.code(204).send();
     },
   );
@@ -989,6 +1214,8 @@ export const registerWorkspaceRoutes = (
         return sendError(reply, 400, "invalid_body");
       }
       reply.header("cache-control", "no-store");
+      // the content now replaced becomes a version (at most every few minutes)
+      await ctx.lifecycle.keepVersion(access.scene.id);
       const updated = await db
         .updateTable("scenes")
         .set({
@@ -1006,6 +1233,13 @@ export const registerWorkspaceRoutes = (
       if (!updated) {
         return sendError(reply, 409, "conflict", "scene was changed meanwhile");
       }
+      ctx.events.recordEdit({
+        actor: request.auth!.user,
+        workspaceId: access.scene.workspace_id,
+        collectionId: access.scene.collection_id,
+        sceneId: access.scene.id,
+        data: { name: access.scene.name },
+      });
       return { revision: Number(updated.revision) };
     },
   );
@@ -1144,6 +1378,9 @@ export const registerWorkspaceRoutes = (
         .where("scene_id", "=", access.scene.id)
         .orderBy("principal_type")
         .execute();
+      const { readLinks, directSharing } = policies(
+        await workspaceById(access.scene.workspace_id),
+      );
       return {
         grants: await grantsWithNames(rows),
         canManage: access.canManage,
@@ -1152,6 +1389,8 @@ export const registerWorkspaceRoutes = (
           name: access.collection.name,
           kind: access.collection.kind,
         },
+        // what the workspace allows (T5): the dialog hides the rest
+        policies: { readLinks, directSharing },
         readLinkUrl:
           access.canManage && access.scene.read_link_token
             ? new URL(
@@ -1186,6 +1425,17 @@ export const registerWorkspaceRoutes = (
       if (!grants || !(await validateUserGrants(grants))) {
         return sendError(reply, 400, "invalid_grants");
       }
+      if (
+        grants.length &&
+        !policies(await workspaceById(access.scene.workspace_id)).directSharing
+      ) {
+        return sendError(
+          reply,
+          403,
+          "policy",
+          "In diesem Workspace lassen sich einzelne Szenen nicht direkt teilen. Bitte über eine Collection freigeben.",
+        );
+      }
       const userId = request.auth!.user.id;
       await db.transaction().execute(async (trx) => {
         await trx
@@ -1208,6 +1458,20 @@ export const registerWorkspaceRoutes = (
         }
       });
       recheckLiveAccess([access.scene.id]);
+      ctx.events.record({
+        type: "share.scene_grants",
+        actor: request.auth!.user,
+        request,
+        workspaceId: access.scene.workspace_id,
+        collectionId: access.scene.collection_id,
+        sceneId: access.scene.id,
+        data: {
+          name: access.scene.name,
+          grants: grants.map(
+            (grant) => `${grant.type}:${grant.principal}:${grant.role}`,
+          ),
+        },
+      });
       return { ok: true };
     },
   );
@@ -1230,6 +1494,14 @@ export const registerWorkspaceRoutes = (
           "Dafür fehlen dir die Rechte.",
         );
       }
+      if (!policies(await workspaceById(access.scene.workspace_id)).readLinks) {
+        return sendError(
+          reply,
+          403,
+          "policy",
+          "In diesem Workspace sind Nur-Lese-Links abgeschaltet.",
+        );
+      }
       const token = randomToken(16);
       await db
         .updateTable("scenes")
@@ -1240,6 +1512,15 @@ export const registerWorkspaceRoutes = (
         // a new link locks out everyone who came through the old one
         recheckLiveAccess([access.scene.id]);
       }
+      ctx.events.record({
+        type: "share.read_link_created",
+        actor: request.auth!.user,
+        request,
+        workspaceId: access.scene.workspace_id,
+        collectionId: access.scene.collection_id,
+        sceneId: access.scene.id,
+        data: { name: access.scene.name },
+      });
       return { url: new URL(`/v/${token}`, config.publicUrl).toString() };
     },
   );
@@ -1272,6 +1553,15 @@ export const registerWorkspaceRoutes = (
           .execute();
       });
       recheckLiveAccess([access.scene.id]);
+      ctx.events.record({
+        type: "share.read_link_deleted",
+        actor: request.auth!.user,
+        request,
+        workspaceId: access.scene.workspace_id,
+        collectionId: access.scene.collection_id,
+        sceneId: access.scene.id,
+        data: { name: access.scene.name },
+      });
       return reply.code(204).send();
     },
   );
