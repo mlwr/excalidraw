@@ -37,6 +37,8 @@ const inlineScriptHashes = (html: string): string[] => {
 export const buildContentSecurityPolicy = (
   config: Config,
   scriptHashes: string[],
+  /** /embed pages: the intranet pages that may show them (T3) */
+  frameAncestors: string[] = config.cspFrameAncestors,
 ): string => {
   const issuerOrigin = config.oidc.issuerUrl.origin;
   const directives: Record<string, string[]> = {
@@ -51,7 +53,7 @@ export const buildContentSecurityPolicy = (
     "worker-src": ["'self'", "blob:"],
     "manifest-src": ["'self'"],
     "frame-src": ["'self'", ...config.cspFrameSrc],
-    "frame-ancestors": ["'self'", ...config.cspFrameAncestors],
+    "frame-ancestors": ["'self'", ...frameAncestors],
     "form-action": ["'self'", issuerOrigin],
     "base-uri": ["'self'"],
     "object-src": ["'none'"],
@@ -111,9 +113,21 @@ export const registerStatic = async (app: FastifyInstance, config: Config) => {
     },
   });
 
-  const sendIndexHtml = (reply: FastifyReply) => {
+  const embedCsp = buildContentSecurityPolicy(
+    config,
+    inlineScriptHashes(indexHtml),
+    [...config.cspFrameAncestors, ...config.embedFrameAncestors],
+  );
+
+  const sendIndexHtml = (reply: FastifyReply, embed = false) => {
     for (const [name, value] of Object.entries(securityHeaders)) {
       reply.header(name, value);
+    }
+    if (embed) {
+      // embedding pages live in iframes of intranet pages
+      reply.header("content-security-policy", embedCsp);
+      reply.removeHeader("x-frame-options");
+      reply.removeHeader("cross-origin-opener-policy");
     }
     return reply
       .header("cache-control", "no-cache")
@@ -133,6 +147,6 @@ export const registerStatic = async (app: FastifyInstance, config: Config) => {
         .header("cache-control", "no-store")
         .send({ error: "not_found", message: "not_found" });
     }
-    return sendIndexHtml(reply);
+    return sendIndexHtml(reply, request.url.startsWith("/embed/"));
   });
 };

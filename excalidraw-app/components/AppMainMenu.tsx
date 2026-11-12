@@ -4,6 +4,7 @@ import {
   historyIcon,
   LibraryIcon,
   loginIcon,
+  presentationIcon,
 } from "@excalidraw/excalidraw/components/icons";
 import { MainMenu } from "@excalidraw/excalidraw/index";
 import React from "react";
@@ -17,6 +18,8 @@ import { getCurrentUser, logout } from "../intranet/session";
 import { appJotaiStore } from "../app-jotai";
 import { saveToWorkspaceOpenAtom } from "../workspace/SaveToWorkspaceDialog";
 import { versionsOpenAtom } from "../workspace/VersionsDialog";
+import { presentationAtom } from "../workspace/presentation/PresentationMode";
+import { pdfImportAtom, slidesExportAtom } from "../workspace/DocumentActions";
 
 import { saveDebugState } from "./DebugCanvas";
 
@@ -26,6 +29,8 @@ export const AppMainMenu: React.FC<{
   isCollabEnabled: boolean;
   isWorkspaceEnabled?: boolean;
   isWorkspaceScene?: boolean;
+  /** read-only: nothing to import */
+  isViewer?: boolean;
   theme: Theme | "system";
   refresh: () => void;
 }> = React.memo((props) => {
@@ -55,6 +60,32 @@ export const AppMainMenu: React.FC<{
           )}
           <MainMenu.Separator />
         </>
+      )}
+      <MainMenu.Item
+        icon={presentationIcon}
+        onSelect={() => appJotaiStore.set(presentationAtom, { start: 0 })}
+      >
+        Präsentieren
+      </MainMenu.Item>
+      <MainMenu.Item
+        icon={ExportIcon}
+        onSelect={() => appJotaiStore.set(slidesExportAtom, "pdf")}
+      >
+        Als PDF exportieren…
+      </MainMenu.Item>
+      <MainMenu.Item
+        icon={ExportIcon}
+        onSelect={() => appJotaiStore.set(slidesExportAtom, "pptx")}
+      >
+        Als PowerPoint exportieren…
+      </MainMenu.Item>
+      {!props.isViewer && (
+        <MainMenu.Item
+          icon={LibraryIcon}
+          onSelect={() => appJotaiStore.set(pdfImportAtom, true)}
+        >
+          PDF importieren…
+        </MainMenu.Item>
       )}
       {!props.isWorkspaceScene && <MainMenu.DefaultItems.LoadScene />}
       <MainMenu.DefaultItems.SaveToActiveFile />

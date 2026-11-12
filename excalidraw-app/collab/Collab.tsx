@@ -88,12 +88,16 @@ import {
 } from "../data/localStorage";
 import { resetBrowserStateVersions } from "../data/tabSync";
 import { getActiveScene, reloadActiveScene } from "../intranet/activeScene";
-import { notifyCommentsChanged } from "../intranet/sceneRoom";
+import {
+  notifyCommentsChanged,
+  notifyNotificationsChanged,
+} from "../intranet/sceneRoom";
 import { LOCAL_EDITOR_PATH } from "../intranet/routes";
 import { getCurrentUser, getMaxFileUploadBytes } from "../intranet/session";
 
 import { collabErrorIndicatorAtom } from "./CollabError";
 import Portal from "./Portal";
+import { SPOTLIGHT_HEARTBEAT_MS, spotlightAtom } from "./spotlight";
 
 import type {
   SocketUpdateDataSource,
@@ -134,6 +138,9 @@ export interface CollabAPI {
   getActiveRoomLink: CollabInstance["getActiveRoomLink"];
   setCollabError: CollabInstance["setErrorDialog"];
   setUserToFollow: CollabInstance["setUserToFollow"];
+  /** intranet fork: spotlight (Z4) */
+  startSpotlight: CollabInstance["startSpotlight"];
+  stopSpotlight: CollabInstance["stopSpotlight"];
 }
 
 interface CollabProps {
@@ -154,6 +161,10 @@ class Collab extends PureComponent<CollabProps, CollabState> {
   private collaborators = new Map<SocketId, Collaborator>();
   /** the socket ids of the users following the current user */
   private followedBy = new Set<SocketId>();
+  /** intranet fork: repeats the spotlight while I have it */
+  private spotlightTimer: number | null = null;
+  /** set while the spotlight itself starts or ends following */
+  private followingForSpotlight = false;
 
   constructor(props: CollabProps) {
     super(props);
@@ -257,6 +268,8 @@ class Collab extends PureComponent<CollabProps, CollabState> {
       getActiveRoomLink: this.getActiveRoomLink,
       setCollabError: this.setErrorDialog,
       setUserToFollow: this.setUserToFollow,
+      startSpotlight: this.startSpotlight,
+      stopSpotlight: this.stopSpotlight,
     };
 
     appJotaiStore.set(collabAPIAtom, collabAPI);
@@ -437,6 +450,7 @@ class Collab extends PureComponent<CollabProps, CollabState> {
     this.portal.close();
     this.fileManager.reset();
     this.followedBy = new Set();
+    this.endSpotlight();
     if (!opts?.isUnload) {
       this.setIsCollaborating(false);
       this.setActiveRoomLink(null);
@@ -693,6 +707,11 @@ class Collab extends PureComponent<CollabProps, CollabState> {
             break;
           }
 
+          case WS_SUBTYPES.SPOTLIGHT: {
+            this.onSpotlight(decryptedData.payload);
+            break;
+          }
+
           case WS_SUBTYPES.IDLE_STATUS: {
             const { userState, socketId, username } = decryptedData.payload;
             this.updateCollaborator(socketId, {
@@ -724,6 +743,10 @@ class Collab extends PureComponent<CollabProps, CollabState> {
       WS_EVENTS.USER_FOLLOW_ROOM_CHANGE,
       (followedBy: SocketId[]) => {
         this.followedBy = new Set(followedBy);
+        appJotaiStore.set(spotlightAtom, {
+          ...appJotaiStore.get(spotlightAtom),
+          followers: followedBy.length,
+        });
 
         this.relayVisibleSceneBounds({ force: true });
       },
@@ -746,6 +769,10 @@ class Collab extends PureComponent<CollabProps, CollabState> {
       };
       this.portal.socket.on("scene-access-changed", startOver);
       this.portal.socket.on("comments-changed", notifyCommentsChanged);
+      this.portal.socket.on(
+        "notifications-changed",
+        notifyNotificationsChanged,
+      );
       this.portal.socket.on("room-access-denied", startOver);
       this.portal.socket.on("disconnect", (reason: string) => {
         if (reason === "io server disconnect") {
@@ -941,6 +968,19 @@ class Collab extends PureComponent<CollabProps, CollabState> {
     this.collaborators = collaborators;
     this.excalidrawAPI.updateScene({ collaborators });
 
+    // the presenter left: the spotlight is over
+    const spotlight = appJotaiStore.get(spotlightAtom);
+    if (
+      spotlight.presenter &&
+      !collaborators.has(spotlight.presenter.socketId)
+    ) {
+      appJotaiStore.set(spotlightAtom, {
+        ...spotlight,
+        presenter: null,
+        optedOut: false,
+      });
+    }
+
     // unfollow if the followed user left the room
     const userToFollow = appJotaiStore.get(userToFollowAtom);
     if (userToFollow && !collaborators.has(userToFollow.socketId)) {
@@ -1058,6 +1098,16 @@ class Collab extends PureComponent<CollabProps, CollabState> {
   setUserToFollow = (userToFollow: UserToFollow | null) => {
     const prev = appJotaiStore.get(userToFollowAtom) ?? null;
 
+    // intranet fork: whoever stops following the spotlight stays out
+    const spotlight = appJotaiStore.get(spotlightAtom);
+    if (
+      !this.followingForSpotlight &&
+      spotlight.presenter &&
+      userToFollow?.socketId !== spotlight.presenter.socketId
+    ) {
+      appJotaiStore.set(spotlightAtom, { ...spotlight, optedOut: true });
+    }
+
     if (prev?.socketId !== userToFollow?.socketId && this.portal.socket) {
       // leave the previous user's follow room before joining the next one
       if (prev) {
@@ -1075,6 +1125,100 @@ class Collab extends PureComponent<CollabProps, CollabState> {
     }
 
     appJotaiStore.set(userToFollowAtom, userToFollow);
+  };
+
+  // --- intranet fork: spotlight (Z4) -------------------------------------------
+
+  startSpotlight = () => {
+    if (!this.portal.socket) {
+      return;
+    }
+    appJotaiStore.set(spotlightAtom, {
+      ...appJotaiStore.get(spotlightAtom),
+      presenting: true,
+    });
+    this.portal.broadcastSpotlight(true);
+    if (this.spotlightTimer) {
+      window.clearInterval(this.spotlightTimer);
+    }
+    this.spotlightTimer = window.setInterval(
+      () => this.portal.broadcastSpotlight(true),
+      SPOTLIGHT_HEARTBEAT_MS,
+    );
+  };
+
+  stopSpotlight = () => {
+    if (appJotaiStore.get(spotlightAtom).presenting) {
+      this.portal.broadcastSpotlight(false);
+    }
+    this.endSpotlight();
+  };
+
+  /** forget the spotlight, mine or someone else's (session over) */
+  private endSpotlight = () => {
+    if (this.spotlightTimer) {
+      window.clearInterval(this.spotlightTimer);
+      this.spotlightTimer = null;
+    }
+    appJotaiStore.set(spotlightAtom, {
+      presenting: false,
+      followers: appJotaiStore.get(spotlightAtom).followers,
+      presenter: null,
+      optedOut: false,
+    });
+  };
+
+  private onSpotlight = ({
+    socketId,
+    username,
+    active,
+  }: {
+    socketId: SocketId;
+    username: string;
+    active: boolean;
+  }) => {
+    if (socketId === this.portal.socket?.id) {
+      return;
+    }
+    const state = appJotaiStore.get(spotlightAtom);
+    const following = appJotaiStore.get(userToFollowAtom);
+    if (active) {
+      const same = state.presenter?.socketId === socketId;
+      const optedOut = same ? state.optedOut : false;
+      appJotaiStore.set(spotlightAtom, {
+        ...state,
+        // someone else takes over: mine ends
+        presenting: false,
+        presenter: { socketId, username },
+        optedOut,
+      });
+      if (state.presenting && this.spotlightTimer) {
+        window.clearInterval(this.spotlightTimer);
+        this.spotlightTimer = null;
+      }
+      if (!optedOut && following?.socketId !== socketId) {
+        this.followingForSpotlight = true;
+        try {
+          this.setUserToFollow({ socketId, username });
+        } finally {
+          this.followingForSpotlight = false;
+        }
+      }
+    } else if (state.presenter?.socketId === socketId) {
+      appJotaiStore.set(spotlightAtom, {
+        ...state,
+        presenter: null,
+        optedOut: false,
+      });
+      if (following?.socketId === socketId) {
+        this.followingForSpotlight = true;
+        try {
+          this.setUserToFollow(null);
+        } finally {
+          this.followingForSpotlight = false;
+        }
+      }
+    }
   };
 
   setUsername = (username: string) => {

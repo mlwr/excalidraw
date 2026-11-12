@@ -14,6 +14,7 @@ import { getCurrentUser, getRuntimeConfig, logout } from "../intranet/session";
 import { workspaceApi } from "../intranet/workspaceApi";
 
 import { ActivityFeed } from "./ActivityFeed";
+import { NotificationBell } from "./NotificationBell";
 import { ApiTokensDialog } from "./ApiTokensDialog";
 import {
   CollectionAccessDialog,
@@ -556,6 +557,13 @@ export const Dashboard = () => {
           <a className="ws-link" href={LOCAL_EDITOR_PATH}>
             Lokale Zeichnung
           </a>
+          <NotificationBell
+            openSettings={
+              new URLSearchParams(window.location.search).get(
+                "notifications",
+              ) === "settings"
+            }
+          />
           {user && (
             <span className="ws-user" title={user.email || user.name}>
               <Avatar id={user.id} name={user.name} />

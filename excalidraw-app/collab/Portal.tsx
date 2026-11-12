@@ -182,6 +182,21 @@ class Portal {
     await this._broadcastSocketData(data as SocketUpdateData);
   };
 
+  /** intranet fork: take or give up the spotlight (Z4) */
+  broadcastSpotlight = (active: boolean) => {
+    if (this.socket?.id) {
+      const data: SocketUpdateDataSource["SPOTLIGHT"] = {
+        type: WS_SUBTYPES.SPOTLIGHT,
+        payload: {
+          socketId: this.socket.id as SocketId,
+          username: this.collab.state.username,
+          active,
+        },
+      };
+      return this._broadcastSocketData(data as SocketUpdateData);
+    }
+  };
+
   broadcastIdleChange = (userState: UserIdleState) => {
     if (this.socket?.id) {
       const data: SocketUpdateDataSource["IDLE_STATUS"] = {

@@ -45,6 +45,10 @@ export interface WorkspacePolicies {
   export: boolean;
   /** days a deleted scene stays in the trash */
   trashRetentionDays: number;
+  /** embedding scenes in intranet pages (T3) */
+  embeds: boolean;
+  /** embedded scenes show without login (for pages on other domains) */
+  embedsWithoutLogin: boolean;
 }
 
 export const policiesOf = (
@@ -65,6 +69,8 @@ export const policiesOf = (
       typeof stored.trashRetentionDays === "number"
         ? stored.trashRetentionDays
         : defaults.trashRetentionDays,
+    embeds: stored.embeds !== false,
+    embedsWithoutLogin: stored.embedsWithoutLogin === true,
   };
 };
 
@@ -78,7 +84,13 @@ export const parsePolicies = (
   }
   const value = input as Record<string, unknown>;
   const next = { ...current };
-  for (const key of ["readLinks", "directSharing", "export"] as const) {
+  for (const key of [
+    "readLinks",
+    "directSharing",
+    "export",
+    "embeds",
+    "embedsWithoutLogin",
+  ] as const) {
     if (value[key] !== undefined) {
       if (typeof value[key] !== "boolean") {
         throw new HttpError(
@@ -163,7 +175,8 @@ const guestWorkspaces = async (db: Kysely<Database>, actor: Actor) => {
  */
 export const clearForbiddenSharing = async (
   db: Kysely<Database>,
-  policies: Pick<WorkspacePolicies, "readLinks" | "directSharing">,
+  policies: Pick<WorkspacePolicies, "readLinks" | "directSharing"> &
+    Partial<Pick<WorkspacePolicies, "embeds">>,
   scope: { workspaceId: string } | { sceneIds: string[] },
 ) => {
   if ("sceneIds" in scope && !scope.sceneIds.length) {
@@ -186,6 +199,14 @@ export const clearForbiddenSharing = async (
     await sql`delete from scene_link_viewers where ${inScope(
       "scene_id",
     )}`.execute(db);
+  }
+  if (policies.embeds === false) {
+    const unembedded = await sql<{ id: string }>`
+      update scenes set embed_token = null
+      where embed_token is not null and ${inScope("id")}
+      returning id
+    `.execute(db);
+    unembedded.rows.forEach((row) => affected.add(row.id));
   }
   if (!policies.directSharing) {
     const removed = await sql<{ scene_id: string }>`

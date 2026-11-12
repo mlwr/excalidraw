@@ -26,6 +26,8 @@ export enum WS_SUBTYPES {
   MOUSE_LOCATION = "MOUSE_LOCATION",
   IDLE_STATUS = "IDLE_STATUS",
   USER_VISIBLE_SCENE_BOUNDS = "USER_VISIBLE_SCENE_BOUNDS",
+  /** intranet fork: someone takes or gives up the spotlight (Z4) */
+  SPOTLIGHT = "SPOTLIGHT",
 }
 
 export const FIREBASE_STORAGE_PREFIXES = {

@@ -157,6 +157,54 @@ spec:
               value: {{ .Values.retention.visitDays | quote }}
             - name: SEARCH_CONTENT
               value: {{ .Values.search.content | quote }}
+            {{- if .Values.ai.baseUrl }}
+            - name: AI_BASE_URL
+              value: {{ .Values.ai.baseUrl | quote }}
+            - name: AI_MODEL
+              value: {{ required "ai.model is required with ai.baseUrl" .Values.ai.model | quote }}
+            - name: AI_VISION_MODEL
+              value: {{ .Values.ai.visionModel | quote }}
+            - name: AI_MAX_TOKENS
+              value: {{ .Values.ai.maxTokens | quote }}
+            - name: AI_TIMEOUT_SECONDS
+              value: {{ .Values.ai.timeoutSeconds | quote }}
+            - name: AI_DAILY_LIMIT
+              value: {{ .Values.ai.dailyLimit | quote }}
+            - name: AI_REQUIRED_ROLE
+              value: {{ .Values.ai.requiredRole | quote }}
+            {{- if or .Values.ai.apiKey .Values.ai.existingSecret }}
+            - name: AI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ai.existingSecret | default $secretName }}
+                  key: {{ .Values.ai.existingSecretKey }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.smtp.host }}
+            - name: SMTP_HOST
+              value: {{ .Values.smtp.host | quote }}
+            - name: SMTP_PORT
+              value: {{ .Values.smtp.port | quote }}
+            - name: SMTP_SECURE
+              value: {{ .Values.smtp.secure | quote }}
+            - name: SMTP_FROM
+              value: {{ .Values.smtp.from | quote }}
+            - name: SMTP_USER
+              value: {{ .Values.smtp.user | quote }}
+            {{- if or .Values.smtp.password .Values.smtp.existingSecret }}
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.smtp.existingSecret | default $secretName }}
+                  key: {{ .Values.smtp.existingSecretKey }}
+            {{- end }}
+            - name: NOTIFY_EMAIL_DELAY_MINUTES
+              value: {{ .Values.smtp.delayMinutes | quote }}
+            {{- end }}
+            {{- with .Values.embed.frameAncestors }}
+            - name: EMBED_FRAME_ANCESTORS
+              value: {{ join " " . | quote }}
+            {{- end }}
             - name: METRICS_PORT
               value: {{ ternary .Values.metrics.port 0 .Values.metrics.enabled | quote }}
             - name: STORAGE_DRIVER

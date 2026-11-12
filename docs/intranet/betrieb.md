@@ -164,6 +164,19 @@ Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. 
 | `VISIT_RETENTION_DAYS` | `180` | Aufbewahrung von „Zuletzt geöffnet“ |
 | `SEARCH_CONTENT` | `true` | Texte in Zeichnungen und Kommentaren durchsuchbar machen (nur verschlüsselte Hashes in der Datenbank); `false` = nur Namen |
 | `METRICS_PORT` | `9464` | Port für Prometheus-Metriken (`/metrics`), getrennt vom App-Port; `0` = aus |
+| `AI_BASE_URL` | leer | OpenAI-kompatibler Endpunkt des eigenen Sprachmodells, z. B. `http://vllm.ki.svc:8000/v1`; leer = keine KI |
+| `AI_MODEL` | – | Modell für Text zu Diagramm (Pflicht mit `AI_BASE_URL`), z. B. `google/gemma-4-31b-it` |
+| `AI_VISION_MODEL` | leer | Modell mit Bildverständnis für Wireframe zu Code; leer = aus |
+| `AI_API_KEY` | leer | Schlüssel des Endpunkts, falls nötig (bleibt auf dem Server) |
+| `AI_DAILY_LIMIT` | `50` | Anfragen pro Person und Tag (Vorgabe, änderbar unter „Verwaltung → KI“) |
+| `AI_REQUIRED_ROLE` | leer | Keycloak-Rolle für KI (Vorgabe, änderbar unter „Verwaltung → KI“); App-Admins dürfen immer |
+| `AI_MAX_TOKENS`, `AI_TIMEOUT_SECONDS` | `4096`, `180` | Längste Antwort und Wartezeit auf das Modell |
+| `SMTP_HOST`, `SMTP_PORT` | leer, `25` | Mailrelay für Benachrichtigungen; leer = nur in der App |
+| `SMTP_SECURE` | `false` | TLS von Anfang an (Port 465); sonst STARTTLS, wenn angeboten |
+| `SMTP_USER`, `SMTP_PASSWORD` | leer | Anmeldung am Relay, falls nötig |
+| `SMTP_FROM` | – | Absender (Pflicht mit `SMTP_HOST`) |
+| `NOTIFY_EMAIL_DELAY_MINUTES` | `10` | So lange wartet eine ungelesene Benachrichtigung, bevor sie per E-Mail kommt (mehrere werden gebündelt) |
+| `EMBED_FRAME_ANCESTORS` | `https://*.<übergeordnete Domain>` | Seiten, die Szenen einbetten dürfen (CSP `frame-ancestors`, nur für `/embed/…`) |
 | `TRUST_PROXY` | `1` | Vertrauenswürdige Proxy-Hops vor dem Pod |
 | `PORT`, `HOST` | `8080`, `0.0.0.0` | Adresse des Servers |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
@@ -177,6 +190,32 @@ Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. 
 - **Hintergrundaufgaben** laufen in jedem Pod, aber dank PostgreSQL-Advisory-Locks jeweils nur in einem gleichzeitig: Suchindex (alle 20 s), Papierkorb leeren (stündlich), Versionen ausdünnen (stündlich), Fristen für Audit-Log, „Zuletzt geöffnet“, gelöschte Kommentare und abgelaufene Tokens (alle 6 h), abgelaufene Sitzungen (alle 15 min). Löschfristen siehe [Datenschutz](datenschutz.md).
 - **API-Tokens** einer Person beenden: die Person selbst im Dashboard, oder ein App-Admin unter „Verwaltung → Personen“.
 - **Updates**: Image-Tag erhöhen und `helm upgrade`; Migrationen laufen beim Start. Beim Update auf Phase 4 kommen bisher nur ausgeblendete, gelöschte Szenen in den Papierkorb; ihre Frist (Standard 30 Tage) beginnt mit dem Update.
+
+### KI mit eigenem Sprachmodell
+
+Text zu Diagramm und Wireframe zu Code laufen über jeden OpenAI-kompatiblen Endpunkt, etwa vLLM, Ollama, LiteLLM oder Azure OpenAI. Der Server reicht die Anfragen weiter und streamt die Antwort; der Browser spricht nie direkt mit dem Modell, Schlüssel bleiben auf dem Server. Beispiel mit vLLM im Cluster:
+
+```yaml
+ai:
+  baseUrl: http://vllm.ki.svc:8000/v1
+  model: google/gemma-4-31b-it # Text zu Diagramm (Mermaid)
+  visionModel: google/gemma-4-31b-it # Wireframe zu Code (braucht Bildverständnis)
+  dailyLimit: 50
+```
+
+Gemma 4 und Qwen liefern gutes Mermaid; „Denkblöcke“ (`<think>…</think>`) und Codeblock-Markierungen filtert der Server heraus. Unter „Verwaltung → KI“ schalten App-Admins die Funktionen ab, beschränken sie auf eine Keycloak-Rolle und ändern das Tageslimit; dort steht auch die Nutzung pro Tag.
+
+### E-Mail-Benachrichtigungen
+
+Mit `smtp.host` (und `smtp.from`) verschickt der Server ungelesene Benachrichtigungen gebündelt per E-Mail, frühestens nach `smtp.delayMinutes`. Die E-Mails enthalten nur, wer wo was getan hat, und einen Link, keine Inhalte von Kommentaren. Jede Person stellt in der Glocke ein, welche Arten per E-Mail kommen.
+
+### Einbetten in Wiki und Intranet
+
+Eine eingebettete Szene ist eine eigene Seite (`/embed/<token>`), die Intranetseiten per iframe zeigen. Ihre Content-Security-Policy erlaubt das für `embed.frameAncestors` (Standard: alle Hosts unter der übergeordneten Domain der App, etwa `https://*.intranet.example`); alle anderen Seiten der App lassen sich weiterhin nicht einbetten.
+
+- Liegt die Intranetseite unter derselben Domain (z. B. `wiki.intranet.example` und `excalidraw.intranet.example`), schickt der Browser das Anmelde-Cookie mit: Angemeldete sehen die Szene, andere bekommen einen Anmelden-Knopf.
+- Liegt sie unter einer anderen Domain, blockieren Browser das Cookie im iframe. Dann muss der Workspace „Einbettungen ohne Anmeldung“ erlauben (Verwaltung → Workspaces → Richtlinien); wer den Link kennt, sieht die Szene dann ohne Anmeldung.
+- Die einbettende Seite muss den Host der App in ihrer eigenen CSP (`frame-src`) zulassen, falls sie eine hat.
 
 ### Monitoring
 

@@ -149,6 +149,11 @@ import { SceneShareDialog } from "./workspace/SceneShareDialog";
 import { CommentsButton } from "./workspace/comments/CommentsButton";
 import { CommentsLayer } from "./workspace/comments/CommentsLayer";
 import { VersionsDialog } from "./workspace/VersionsDialog";
+import { NotificationBell } from "./workspace/NotificationBell";
+import { PresentationMode } from "./workspace/presentation/PresentationMode";
+import { DocumentActions } from "./workspace/DocumentActions";
+import { SpotlightButton } from "./collab/SpotlightButton";
+import { spotlightAtom } from "./collab/spotlight";
 import {
   createBrowserLibraryMigration,
   ServerLibraryAdapter,
@@ -441,6 +446,9 @@ const ExcalidrawWrapper = () => {
   });
   const collabError = useAtomValue(collabErrorIndicatorAtom);
   const userToFollow = useAtomValue(userToFollowAtom);
+  const spotlight = useAtomValue(spotlightAtom);
+  const followsSpotlight =
+    !!userToFollow && spotlight.presenter?.socketId === userToFollow.socketId;
 
   const viewportStatusFrame = useMemo(
     () =>
@@ -450,7 +458,7 @@ const ExcalidrawWrapper = () => {
             label: {
               label: (
                 <>
-                  Following{" "}
+                  {followsSpotlight ? "Spotlight:" : "Du folgst"}{" "}
                   <span
                     style={{
                       display: "block",
@@ -469,7 +477,7 @@ const ExcalidrawWrapper = () => {
             },
           }
         : null,
-    [userToFollow, collabAPI],
+    [userToFollow, collabAPI, followsSpotlight],
   );
 
   // intranet fork: with an account the library lives on the server (L1);
@@ -1006,7 +1014,13 @@ const ExcalidrawWrapper = () => {
           return (
             <div className="excalidraw-ui-top-right">
               {collabError.message && <CollabError collabError={collabError} />}
+              {isWorkspaceEnabled && (
+                <NotificationBell className="ws-bell--editor" />
+              )}
               {activeScene && <CommentsButton />}
+              {isCollaborating && (
+                <SpotlightButton canPresent={activeScene?.role !== "viewer"} />
+              )}
               <LiveCollaborationTrigger
                 isCollaborating={isCollaborating}
                 onSelect={() =>
@@ -1034,6 +1048,7 @@ const ExcalidrawWrapper = () => {
           isCollabEnabled={isCollabAvailable && !activeScene}
           isWorkspaceEnabled={isWorkspaceEnabled}
           isWorkspaceScene={!!activeScene}
+          isViewer={activeScene?.role === "viewer"}
           theme={appTheme}
           refresh={() => forceRefresh((prev) => !prev)}
         />
@@ -1110,7 +1125,15 @@ const ExcalidrawWrapper = () => {
         <AppSidebar
           excalidrawAPI={excalidrawAPI}
           withTeamLibraries={isWorkspaceEnabled}
+          canEditSlides={activeScene?.role !== "viewer"}
         />
+        {excalidrawAPI && <PresentationMode excalidrawAPI={excalidrawAPI} />}
+        {excalidrawAPI && (
+          <DocumentActions
+            excalidrawAPI={excalidrawAPI}
+            sceneName={activeScene?.name || "Excalidraw"}
+          />
+        )}
 
         {errorMessage && (
           <ErrorDialog onClose={() => setErrorMessage("")}>

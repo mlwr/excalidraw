@@ -32,6 +32,8 @@ import { createSearch } from "./workspace/search.js";
 import { registerAdminRoutes } from "./admin/routes.js";
 import { registerAiRoutes } from "./ai/routes.js";
 import { createAi } from "./ai/service.js";
+import { registerNotificationRoutes } from "./notifications/routes.js";
+import { createNotifications } from "./notifications/service.js";
 import { registerMcp } from "./mcp/server.js";
 import { createCommentService } from "./workspace/comments.js";
 import { createWorkspaceService } from "./workspace/service.js";
@@ -41,6 +43,7 @@ import {
 } from "./workspace/discovery.js";
 import { registerHistoryRoutes } from "./workspace/history.js";
 import { registerLibraryRoutes } from "./workspace/libraries.js";
+import { registerEmbedRoutes } from "./workspace/embeds.js";
 
 import type { Config } from "./config.js";
 import type { AppContext, RealtimeHooks } from "./context.js";
@@ -101,6 +104,7 @@ export const buildApp = async (
     recheckScenes: async () => {},
     broadcastSceneUpdate: () => {},
     notifyComments: () => {},
+    notifyUsers: () => {},
   };
 
   // filled right below: they need the context themselves
@@ -120,10 +124,12 @@ export const buildApp = async (
       broadcastSceneUpdate: (id, key, elements) =>
         realtimeHooks.broadcastSceneUpdate(id, key, elements),
       notifyComments: (id) => realtimeHooks.notifyComments(id),
+      notifyUsers: (ids) => realtimeHooks.notifyUsers(ids),
     },
   } as AppContext;
   ctx.lifecycle = createLifecycle(ctx);
   ctx.ai = createAi(ctx);
+  ctx.notifications = createNotifications(ctx);
   ctx.search = createSearch(ctx);
 
   await app.register(fastifyCookie);
@@ -223,6 +229,8 @@ export const buildApp = async (
   // Phase 5: AI with the company's language model, libraries
   registerAiRoutes(app, ctx, requireAuth);
   registerLibraryRoutes(app, ctx, requireAuth);
+  registerNotificationRoutes(app, ctx, requireAuth);
+  registerEmbedRoutes(app, ctx, requireAuth);
   if (config.api.enabled) {
     const requireToken = createRequireToken(new TokenStore(ctx.db, config));
     registerTokenRoutes(app, ctx, requireAuth);
@@ -303,6 +311,11 @@ export const buildApp = async (
         name: "traces",
         everyMs: 6 * 60 * MINUTE,
         run: () => ctx.lifecycle.purgeTraces(),
+      },
+      {
+        name: "emails",
+        everyMs: MINUTE,
+        run: () => ctx.notifications.sendEmails(),
       },
     ],
     metrics.job,

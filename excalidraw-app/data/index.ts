@@ -109,6 +109,14 @@ export type SocketUpdateDataSource = {
       sceneBounds: SceneBounds;
     };
   };
+  SPOTLIGHT: {
+    type: WS_SUBTYPES.SPOTLIGHT;
+    payload: {
+      socketId: SocketId;
+      username: string;
+      active: boolean;
+    };
+  };
   IDLE_STATUS: {
     type: WS_SUBTYPES.IDLE_STATUS;
     payload: {

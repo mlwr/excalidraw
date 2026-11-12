@@ -65,6 +65,8 @@ export interface WorkspacePolicies {
   collectionCreation: "members" | "admins";
   export: boolean;
   trashRetentionDays: number;
+  embeds: boolean;
+  embedsWithoutLogin: boolean;
 }
 
 /** guest: sees only what was shared with them in this workspace */
@@ -255,7 +257,13 @@ export const workspaceApi = {
       canManage: boolean;
       collection: { id: string; name: string; kind: "personal" | "team" };
       readLinkUrl: string | null;
-      policies: { readLinks: boolean; directSharing: boolean };
+      embedUrl: string | null;
+      policies: {
+        readLinks: boolean;
+        directSharing: boolean;
+        embeds: boolean;
+        embedsWithoutLogin: boolean;
+      };
     }>(await backendFetch(`/api/scenes/${encodeURIComponent(sceneId)}/grants`)),
 
   setSceneGrants: async (sceneId: string, grants: Omit<Grant, "label">[]) =>
@@ -279,6 +287,16 @@ export const workspaceApi = {
         "DELETE",
         `/api/scenes/${encodeURIComponent(sceneId)}/read-link`,
       ),
+    ),
+
+  createEmbed: async (sceneId: string) =>
+    json<{ url: string }>(
+      await send("POST", `/api/scenes/${encodeURIComponent(sceneId)}/embed`),
+    ),
+
+  deleteEmbed: async (sceneId: string) =>
+    json<void>(
+      await send("DELETE", `/api/scenes/${encodeURIComponent(sceneId)}/embed`),
     ),
 
   resolveReadLink: async (token: string) =>

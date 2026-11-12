@@ -434,6 +434,11 @@ export const attachRealtime = (
     notifyComments: (sceneId) => {
       io.to(`${SCENE_ROOM_PREFIX}${sceneId}`).emit("comments-changed");
     },
+    notifyUsers: (userIds) => {
+      for (const userId of new Set(userIds)) {
+        io.to(`user:${userId}`).emit("notifications-changed");
+      }
+    },
     recheckScenes: async (sceneIds) => {
       const rooms = new Set(sceneIds.map((id) => `${SCENE_ROOM_PREFIX}${id}`));
       if (!rooms.size) {

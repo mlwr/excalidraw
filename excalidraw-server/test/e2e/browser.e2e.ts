@@ -6,6 +6,7 @@
  * TEST_DATABASE_URL. Run with `yarn --cwd excalidraw-server e2e`.
  */
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -357,7 +358,8 @@ describeE2E("browser end-to-end", () => {
           await overview.reload();
           return overview.locator(".ws-card img").count();
         },
-        { timeout: 60000, interval: 3000 },
+        // thumbnails are made at most every 30 seconds
+        { timeout: 100000, interval: 3000 },
       )
       .toBe(1);
     await overview.waitForSelector(".ws-card__live");
@@ -374,7 +376,7 @@ describeE2E("browser end-to-end", () => {
     expect(external).toEqual([]);
     expect(cspViolations).toEqual([]);
     expect(pageErrors).toEqual([]);
-  }, 180000);
+  }, 200000);
 
   it("issues API tokens, shows API changes live and keeps comments", async () => {
     const shot = async (page: Page, name: string) => {
@@ -708,6 +710,238 @@ describeE2E("browser end-to-end", () => {
     expect(cspViolations).toEqual([]);
     expect(pageErrors).toEqual([]);
   }, 180000);
+
+  it("presents, exports and embeds slides, notifies and puts others in the spotlight", async () => {
+    // --- bob prepares a scene with two slides through the REST API ------------
+    const bobCookie = await env.login(bob);
+    const inject = (
+      who: string,
+      method: string,
+      url: string,
+      payload?: unknown,
+    ) =>
+      env.built.app.inject({
+        method: method as "GET",
+        url,
+        headers: { cookie: who, origin: APP_URL },
+        ...(payload ? { payload: payload as Record<string, unknown> } : {}),
+      });
+    const { token } = (
+      await inject(bobCookie, "POST", "/api/tokens", {
+        name: "E2E Phase 5",
+        scope: "write",
+        expiresInDays: 7,
+      })
+    ).json();
+    const api = async (method: string, url: string, payload?: unknown) => {
+      const response = await env.built.app.inject({
+        method: method as "GET",
+        url: `/api/v1${url}`,
+        headers: { authorization: `Bearer ${token}` },
+        ...(payload ? { payload: payload as Record<string, unknown> } : {}),
+      });
+      expect(response.statusCode).toBeLessThan(300);
+      return response.body ? response.json() : null;
+    };
+    const { scene } = await api("POST", "/scenes", {
+      name: "Vortrag",
+      elements: [
+        {
+          type: "rectangle",
+          id: "eins",
+          x: 0,
+          y: 0,
+          width: 320,
+          height: 140,
+          label: { text: "Folie Eins" },
+        },
+        {
+          type: "frame",
+          x: -20,
+          y: -20,
+          children: ["eins"],
+          name: "Einleitung",
+        },
+        {
+          type: "rectangle",
+          id: "zwei",
+          x: 600,
+          y: 0,
+          width: 320,
+          height: 140,
+          label: { text: "Folie Zwei" },
+        },
+        { type: "frame", x: 580, y: -20, children: ["zwei"], name: "Schluss" },
+      ],
+    });
+    const countTypes = async () => {
+      const content = await api(
+        "GET",
+        `/scenes/${scene.id}/content?files=false`,
+      );
+      const count = (type: string) =>
+        content.elements.filter(
+          (el: { type: string; isDeleted?: boolean }) =>
+            el.type === type && !el.isDeleted,
+        ).length;
+      return { frames: count("frame"), images: count("image") };
+    };
+
+    env.oidc.setUser(bob);
+    const bobContext = await newContext();
+    const editor = await bobContext.newPage();
+    await editor.goto(`${APP_URL}/s/${scene.id}`);
+    await editor.waitForSelector(".excalidraw .collab-button", {
+      timeout: 30000,
+    });
+
+    // --- presentation: frames are slides --------------------------------------
+    await editor.click("[data-testid='main-menu-trigger']");
+    await editor.getByText("Präsentieren", { exact: true }).click();
+    const controls = editor.locator(".ws-present");
+    await controls.waitFor();
+    await expect
+      .poll(() => controls.locator(".ws-present__counter").innerText())
+      .toMatch(/1 \/ 2\s*Einleitung/);
+    await editor.keyboard.press("ArrowRight");
+    await expect
+      .poll(() => controls.locator(".ws-present__counter").innerText())
+      .toMatch(/2 \/ 2\s*Schluss/);
+    await editor.keyboard.press("Escape");
+    await controls.waitFor({ state: "detached" });
+
+    // --- slide overview: reorder ------------------------------------------------
+    await editor.click(".default-sidebar-trigger");
+    await editor.click("[aria-label='Folien und Präsentation']");
+    const names = editor.locator(".ws-slides__name");
+    await expect
+      .poll(() => names.allInnerTexts())
+      .toEqual(["1. Einleitung", "2. Schluss"]);
+    await editor.click(
+      ".ws-slides__item >> nth=0 >> [aria-label='Nach hinten']",
+    );
+    await expect
+      .poll(() => names.allInnerTexts())
+      .toEqual(["1. Schluss", "2. Einleitung"]);
+
+    // --- export as PDF and PowerPoint -------------------------------------------
+    for (const [label, extension, magic] of [
+      ["Als PDF exportieren…", "pdf", "%PDF"],
+      ["Als PowerPoint exportieren…", "pptx", "PK"],
+    ] as const) {
+      await editor.click("[data-testid='main-menu-trigger']");
+      const downloaded = editor.waitForEvent("download");
+      await editor.getByText(label).click();
+      const download = await downloaded;
+      expect(download.suggestedFilename()).toBe(`Vortrag.${extension}`);
+      const file = await readFile((await download.path())!);
+      expect(file.length).toBeGreaterThan(1000);
+      expect(file.subarray(0, magic.length).toString("latin1")).toBe(magic);
+    }
+
+    // --- PDF import: pages become images in frames -----------------------------
+    const { PDFDocument, rgb } = await import("pdf-lib");
+    const pdf = await PDFDocument.create();
+    for (const color of [rgb(0.9, 0.2, 0.2), rgb(0.2, 0.4, 0.9)]) {
+      pdf
+        .addPage([400, 300])
+        .drawRectangle({ x: 40, y: 40, width: 320, height: 220, color });
+    }
+    await editor.click("[data-testid='main-menu-trigger']");
+    const chooser = editor.waitForEvent("filechooser");
+    await editor.getByText("PDF importieren…").click();
+    await (
+      await chooser
+    ).setFiles({
+      name: "Handout.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from(await pdf.save()),
+    });
+    await editor.waitForSelector("text=2 Seiten eingefügt.", {
+      timeout: 30000,
+    });
+    await expect
+      .poll(countTypes, { timeout: 30000, interval: 1000 })
+      .toEqual({ frames: 4, images: 2 });
+
+    // --- notifications: carol hears about the share -----------------------------
+    const carolCookie = await env.login(carolIT);
+    const carolId = (await inject(carolCookie, "GET", "/api/auth/me")).json()
+      .user.id;
+    await inject(bobCookie, "PUT", `/api/scenes/${scene.id}/grants`, {
+      grants: [{ type: "user", principal: carolId, role: "viewer" }],
+    });
+    env.oidc.setUser(carolIT);
+    const carolContext = await newContext();
+    const carolDashboard = await openDashboard(carolContext);
+    const bell = carolDashboard.locator(".ws-bell__button");
+    await expect
+      .poll(
+        async () => {
+          await carolDashboard.reload();
+          await carolDashboard.waitForSelector(".ws-bell__button");
+          return bell.locator(".ws-bell__count").count();
+        },
+        { timeout: 30000, interval: 2000 },
+      )
+      .toBe(1);
+    await bell.click();
+    const item = carolDashboard.locator(".ws-bell__item", {
+      hasText: "Bob Beispiel hat „Vortrag“ mit dir geteilt",
+    });
+    await item.waitFor();
+    await item.click();
+    await carolDashboard.waitForURL(new RegExp(`/s/${scene.id}$`));
+    await carolDashboard.waitForSelector(".excalidraw .collab-button", {
+      timeout: 30000,
+    });
+
+    // --- spotlight: carol follows bob's view --------------------------------------
+    const spotlight = editor.locator(".ws-spotlight");
+    await spotlight.waitFor({ timeout: 30000 });
+    await spotlight.click();
+    await carolDashboard.waitForSelector(
+      ".viewport-status-frame__badge:has-text('Spotlight:')",
+      { timeout: 30000 },
+    );
+    await editor.locator(".ws-spotlight").click();
+    await carolDashboard.waitForSelector(
+      ".viewport-status-frame__badge:has-text('Spotlight:')",
+      { state: "detached", timeout: 30000 },
+    );
+
+    // --- embedding: read-only for the intranet --------------------------------------
+    const embed = (
+      await inject(bobCookie, "POST", `/api/scenes/${scene.id}/embed`)
+    ).json().url;
+    const embedPage = await carolContext.newPage();
+    const response = await embedPage.goto(embed);
+    expect(response!.headers()["content-security-policy"]).toMatch(
+      /frame-ancestors 'self'/,
+    );
+    expect(response!.headers()["x-frame-options"]).toBeUndefined();
+    await embedPage.waitForSelector(
+      ".ws-embed__open:has-text('In Excalidraw öffnen')",
+      {
+        timeout: 30000,
+      },
+    );
+    await expect
+      .poll(() => drawnPixels(embedPage), { timeout: 15000 })
+      .toBeGreaterThan(100);
+    // nobody logged in: the page asks for a login instead
+    const anonymous = await browser.newContext();
+    const outside = await anonymous.newPage();
+    await outside.goto(embed);
+    await outside.waitForSelector(
+      "text=Diese Zeichnung sehen nur angemeldete Mitarbeitende.",
+    );
+    await anonymous.close();
+
+    expect(external).toEqual([]);
+    expect(cspViolations).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  }, 240000);
 
   it("saves a drawing from the local editor into the workspace", async () => {
     env.oidc.setUser(bob);

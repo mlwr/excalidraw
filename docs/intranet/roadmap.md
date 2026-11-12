@@ -10,7 +10,7 @@ Grundlage ist die Priorisierung vom 11.11.2026 (Muss, Soll, Kann, Gestrichen) de
 | 2 Workspace | W2 Szenen auf dem Server, W1 Dashboard, W3 Collections, T1 Teilen mit Personen und Teams, T2 Nur-Lese-Links, Z1 dauerhafte Live-Zusammenarbeit | umgesetzt |
 | 3 Kommentare und Schnittstellen | Z2 Kommentare, I1 REST-API, I2 MCP-Server | umgesetzt |
 | 4 Soll: Ablage und Betrieb | W5 Papierkorb, W6 Suche, W7 Versionsverlauf, W8 Aktivitäts-Feed, W9 Export, W10 mehrere Workspaces, T5 Admin-Richtlinien, S2 Audit-Log, S3 Löschkonzept, B7 Monitoring/Backups, B8 Branding | umgesetzt |
-| 5 Soll: Zusammenarbeit, Präsentation, KI, Bibliotheken | Z3 Benachrichtigungen, Z4 Spotlight, T3 Einbetten, P1 Präsentationsmodus, P7 Export PDF/PPTX, K1 KI mit internem Sprachmodell, K2 KI-Steuerung, L1 persönliche Bibliothek, L2 Team-Bibliotheken, E4 PDF-Import | geplant |
+| 5 Soll: Zusammenarbeit, Präsentation, KI, Bibliotheken | Z3 Benachrichtigungen, Z4 Spotlight, T3 Einbetten, P1 Präsentationsmodus, P7 Export PDF/PPTX, K1 KI mit internem Sprachmodell, K2 KI-Steuerung, L1 persönliche Bibliothek, L2 Team-Bibliotheken, E4 PDF-Import | umgesetzt |
 | 6 Kann | E2, E3, I3, L3, P2–P6, S4, W4 nach Bedarf | offen |
 
 Das Datenmodell enthält von Anfang an Workspaces, damit W10 ohne Umbau möglich bleibt.
@@ -70,6 +70,27 @@ Bekannte Grenzen:
 - Das Audit-Log zeigt IDs von Szenen, nicht ihre Namen, wenn die Szene inzwischen gelöscht ist.
 - Die Export-Richtlinie betrifft den ZIP-Export ganzer Workspaces und Collections. Einzelne Szenen lassen sich weiterhin im Editor speichern und über die REST-API lesen; wer das unterbinden will, schaltet die API ab oder beschränkt sie auf eine Rolle (`API_REQUIRED_ROLE`).
 - Beim Update auf Phase 4 kommen Szenen, die vorher gelöscht (nur ausgeblendet) wurden, in den Papierkorb; ihre Frist beginnt mit dem Update.
+
+### Phase 5 im Detail
+
+- **K1** Text zu Diagramm (Chat, erzeugt Mermaid) und Wireframe zu Code über einen OpenAI-kompatiblen Endpunkt des Unternehmens (vLLM, Ollama, LiteLLM, Azure OpenAI), gestreamt über den eigenen Server; Schlüssel bleiben dort, Eingaben werden nicht gespeichert ([Betrieb](./betrieb.md#ki-mit-eigenem-sprachmodell)).
+- **K2** Unter „Verwaltung → KI“: an/aus, nur für eine Keycloak-Rolle, Tageslimit pro Person, Nutzung pro Tag (Anfragen, Personen, Tokens; keine Auswertung je Person).
+- **L1** Die eigene Bibliothek liegt mit dem Konto auf dem Server (verschlüsselt); was im Browser lag, wird einmalig übernommen.
+- **L2** Team-Bibliotheken je Collection (gepflegt von deren Bearbeitenden) und Firmenbibliotheken je Workspace (gepflegt von dessen Admins), in der Seitenleiste: ziehen oder klicken zum Einfügen, Auswahl hinzufügen, Einträge entfernen.
+- **Z3** Benachrichtigungen bei Erwähnungen, Antworten in eigenen Threads und neuen Freigaben (auch an Gruppen bis 50 Personen): Glocke in Übersicht und Editor, live in offenen Editoren, per E-Mail über das interne Relay gebündelt, wenn ungelesen; je Art abbestellbar.
+- **Z4** Spotlight in Live-Sitzungen: Alle folgen der Ansicht der präsentierenden Person, auch wer später dazukommt; wer selbst schauen will, verlässt es.
+- **P1** Präsentationsmodus: Frames sind Folien, Vollbild, Pfeiltasten, Laserpointer (L), Folienübersicht mit Umsortieren in der Seitenleiste.
+- **P7** Export aller Folien als PDF oder PowerPoint (16:9, hochaufgelöste Bilder je Folie).
+- **E4** PDF-Import im Browser: jede Seite als Bild in einem eigenen Frame (bis 50 Seiten).
+- **T3** Einbetten per iframe in Wiki- und Intranetseiten: Nur-Ansicht, aktualisiert sich alle 15 Sekunden, für Angemeldete oder, wenn der Workspace es erlaubt, ohne Anmeldung ([Betrieb](./betrieb.md#einbetten-in-wiki-und-intranet)).
+
+Bekannte Grenzen:
+
+- PDF- und PowerPoint-Export enthalten Bilder der Folien; Texte sind dort nicht bearbeitbar.
+- PDF-Seiten werden als Bilder eingefügt (Text darin ist nicht durchsuchbar).
+- Spotlight und Folgen wirken nur in Live-Sitzungen; Personen mit Leserecht folgen, präsentieren aber nicht im Spotlight.
+- Benachrichtigungen bei Freigaben an große Gruppen (über 50 bekannte Personen) entfallen, um Massenmails zu vermeiden.
+- Wireframe zu Code braucht ein Modell mit Bildverständnis (`AI_VISION_MODEL`).
 
 ## Priorisierung
 

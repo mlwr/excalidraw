@@ -51,7 +51,8 @@ const PolicyForm = ({
 
   const switchesOff =
     (workspace.policies.readLinks && !policies.readLinks) ||
-    (workspace.policies.directSharing && !policies.directSharing);
+    (workspace.policies.directSharing && !policies.directSharing) ||
+    (workspace.policies.embeds && !policies.embeds);
 
   const save = async () => {
     setSaving(true);
@@ -98,6 +99,24 @@ const PolicyForm = ({
         Alle dürfen den Workspace oder Collections als ZIP exportieren (sonst
         nur Workspace-Admins; einzelne Szenen speichern bleibt möglich)
       </label>
+      <label className="ws-toggle">
+        <input
+          type="checkbox"
+          checked={policies.embeds}
+          onChange={(event) => set("embeds", event.target.checked)}
+        />
+        Szenen dürfen in Wiki- und Intranetseiten eingebettet werden
+      </label>
+      <label className="ws-toggle">
+        <input
+          type="checkbox"
+          checked={policies.embedsWithoutLogin}
+          disabled={!policies.embeds}
+          onChange={(event) => set("embedsWithoutLogin", event.target.checked)}
+        />
+        Eingebettete Szenen auch ohne Anmeldung zeigen (für Seiten auf anderen
+        Domains; jeder mit dem Link sieht die Szene)
+      </label>
       <label className="ws-field">
         <span>Collections anlegen dürfen</span>
         <select
@@ -129,8 +148,8 @@ const PolicyForm = ({
       </label>
       {switchesOff && (
         <Notice>
-          Beim Speichern werden bestehende Nur-Lese-Links bzw. direkte Freigaben
-          in diesem Workspace sofort entfernt.
+          Beim Speichern werden bestehende Nur-Lese-Links, Einbettungen bzw.
+          direkte Freigaben in diesem Workspace sofort entfernt.
         </Notice>
       )}
       {message && <Notice kind={message.kind}>{message.text}</Notice>}

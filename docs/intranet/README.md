@@ -61,7 +61,8 @@ Ein Pod liefert die gebaute App aus, beantwortet die API unter `/api` und betrei
 | `/s/<id>` | Workspace-Szene. Alle, die sie gerade geöffnet haben, arbeiten live zusammen; Änderungen werden laufend auf dem Server gespeichert |
 | `/v/<token>` | Nur-Lese-Link einer Szene. Nur für angemeldete Personen, öffnet die Szene in der Ansicht |
 | `/local` | Lokale Zeichnung wie auf excalidraw.com, nur im Browser gespeichert; über das Menü „Im Workspace speichern“ wird daraus eine Szene |
-| `/admin` | Verwaltung für App-Admins (Workspaces, Personen, Audit-Log, Branding, Kennzahlen) und Workspace-Admins (ihre Workspaces) |
+| `/admin` | Verwaltung für App-Admins (Workspaces, Personen, Audit-Log, KI, Branding, Kennzahlen) und Workspace-Admins (ihre Workspaces) |
+| `/embed/<token>` | In Wiki- oder Intranetseiten eingebettete Szene (Nur-Ansicht, aktualisiert sich selbst) |
 | `/#room=…`, `/#json=…` | Ad-hoc-Live-Sitzung bzw. Teilen-Link mit Ende-zu-Ende-Verschlüsselung (wie bisher) |
 
 Rechte:
@@ -73,6 +74,17 @@ Rechte:
 - **Workspaces**: Der allgemeine Workspace ist für alle offen. Weitere Workspaces legen App-Admins an und tragen Mitglieder (Personen oder Keycloak-Gruppen) und Workspace-Admins ein. Workspace-Admins verwalten alle Team-Collections, Mitglieder und Richtlinien ihres Workspaces (Nur-Lese-Links, direktes Teilen, wer Collections anlegt, wer exportiert, Frist im Papierkorb). Wer kein Mitglied ist, sieht dort nur, was mit ihm geteilt wurde.
 - **Papierkorb**: Gelöschte Szenen holt zurück, wer sie bearbeiten durfte oder sie gelöscht hat. Nach der Frist (Standard 30 Tage) sind sie endgültig weg.
 - **Versionen**: im Editor über das Hauptmenü „Versionsverlauf…“; alle mit Zugriff über eine Collection oder Freigabe sehen frühere Stände (über einen Nur-Lese-Link nicht), wer bearbeiten darf, stellt einen wieder her.
+
+Im Editor außerdem:
+
+- **Präsentieren**: Jeder Frame ist eine Folie. Hauptmenü „Präsentieren“ oder in der Seitenleiste der Tab „Folien“ (Reihenfolge ändern, ab einer Folie starten). Pfeiltasten oder Leertaste blättern, L schaltet den Laserpointer, Esc beendet.
+- **Spotlight**: In einer Live-Sitzung oben rechts „Spotlight“: Alle anderen folgen deiner Ansicht, beim Präsentieren deinen Folien. Wer selbst schauen will, verlässt es mit einem Klick.
+- **Export als PDF oder PowerPoint**: Hauptmenü; jede Folie wird eine Seite (ohne Frames die ganze Zeichnung).
+- **PDF importieren**: Hauptmenü; jede Seite kommt als Bild in einem eigenen Frame in die Szene, zum Annotieren oder Präsentieren. Das PDF verlässt den Browser nicht.
+- **Bibliotheken**: Die eigene Bibliothek liegt jetzt auf dem Server und ist auf jedem Gerät da. Team-Bibliotheken (je Collection, gepflegt von deren Bearbeitenden) und Firmenbibliotheken (je Workspace, gepflegt von dessen Admins) stehen in der Seitenleiste im eigenen Tab.
+- **Benachrichtigungen**: Die Glocke oben zeigt Erwähnungen, Antworten auf Kommentare und neue Freigaben; mit eingerichtetem Mailserver kommen ungelesene auch per E-Mail (einzeln abbestellbar).
+- **KI** (wenn eingerichtet): Text zu Diagramm und Wireframe zu Code laufen über euer eigenes Sprachmodell.
+- **Einbetten**: Im Teilen-Dialog „In Wiki und Intranet einbetten“ liefert den iframe-Code.
 
 Kommentieren: im Editor oben rechts das Sprechblasen-Symbol, dann „Kommentar hinzufügen“ und auf die Stelle klicken. Liegt dort ein Element, hängt der Kommentar daran und wandert mit, wenn es verschoben wird.
 

@@ -184,6 +184,49 @@ export const registerWorkspaceRoutes = (
   const policies = (workspace: Pick<Workspace, "settings">) =>
     policiesOf(workspace, { trashRetentionDays: config.retention.trashDays });
 
+  /** Z3: people who got access with this change hear about it */
+  const notifyNewGrants = (
+    request: FastifyRequest,
+    before: { principal_type: string; principal: string }[],
+    after: { type: string; principal: string }[],
+    target: {
+      sceneId?: string;
+      collectionId?: string;
+      data: Record<string, unknown>;
+    },
+  ) => {
+    const had = new Set(
+      before.map((grant) => `${grant.principal_type}:${grant.principal}`),
+    );
+    const added = after.filter(
+      (grant) => !had.has(`${grant.type}:${grant.principal}`),
+    );
+    if (!added.length) {
+      return;
+    }
+    const user = request.auth!.user;
+    void ctx.notifications
+      .groupMembers(
+        added
+          .filter((grant) => grant.type === "group")
+          .map((grant) => grant.principal),
+      )
+      .then((members) =>
+        ctx.notifications.notify({
+          type: "share",
+          userIds: [
+            ...added
+              .filter((grant) => grant.type === "user")
+              .map((grant) => grant.principal),
+            ...members,
+          ],
+          actor: { id: user.id, name: user.name },
+          ...target,
+        }),
+      )
+      .catch(() => {});
+  };
+
   const workspaceById = (id: string) =>
     db
       .selectFrom("workspaces")
@@ -685,6 +728,11 @@ export const registerWorkspaceRoutes = (
         );
       }
       const userId = request.auth!.user.id;
+      const previous = await db
+        .selectFrom("collection_grants")
+        .select(["principal_type", "principal"])
+        .where("collection_id", "=", loaded.collection.id)
+        .execute();
       await db.transaction().execute(async (trx) => {
         await trx
           .deleteFrom("collection_grants")
@@ -710,6 +758,10 @@ export const registerWorkspaceRoutes = (
         .where("deleted_at", "is", null)
         .execute();
       recheckLiveAccess(scenes.map((scene) => scene.id));
+      notifyNewGrants(request, previous, grants, {
+        collectionId: loaded.collection.id,
+        data: { collectionName: loaded.collection.name },
+      });
       ctx.events.record({
         type: "collection.grants",
         actor: request.auth!.user,
@@ -1432,7 +1484,7 @@ export const registerWorkspaceRoutes = (
         .where("scene_id", "=", access.scene.id)
         .orderBy("principal_type")
         .execute();
-      const { readLinks, directSharing } = policies(
+      const { readLinks, directSharing, embeds, embedsWithoutLogin } = policies(
         await workspaceById(access.scene.workspace_id),
       );
       return {
@@ -1444,7 +1496,14 @@ export const registerWorkspaceRoutes = (
           kind: access.collection.kind,
         },
         // what the workspace allows (T5): the dialog hides the rest
-        policies: { readLinks, directSharing },
+        policies: { readLinks, directSharing, embeds, embedsWithoutLogin },
+        embedUrl:
+          access.canManage && access.scene.embed_token
+            ? new URL(
+                `/embed/${access.scene.embed_token}`,
+                config.publicUrl,
+              ).toString()
+            : null,
         readLinkUrl:
           access.canManage && access.scene.read_link_token
             ? new URL(
@@ -1491,6 +1550,11 @@ export const registerWorkspaceRoutes = (
         );
       }
       const userId = request.auth!.user.id;
+      const previous = await db
+        .selectFrom("scene_grants")
+        .select(["principal_type", "principal"])
+        .where("scene_id", "=", access.scene.id)
+        .execute();
       await db.transaction().execute(async (trx) => {
         await trx
           .deleteFrom("scene_grants")
@@ -1512,6 +1576,10 @@ export const registerWorkspaceRoutes = (
         }
       });
       recheckLiveAccess([access.scene.id]);
+      notifyNewGrants(request, previous, grants, {
+        sceneId: access.scene.id,
+        data: { sceneName: access.scene.name },
+      });
       ctx.events.record({
         type: "share.scene_grants",
         actor: request.auth!.user,

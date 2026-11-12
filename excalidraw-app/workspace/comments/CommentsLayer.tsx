@@ -323,6 +323,25 @@ export const CommentsLayer = ({ scene }: { scene: OpenedScene }) => {
     [scene.id, setThreads],
   );
 
+  // a link from a notification: /s/<id>?thread=<threadId>
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const thread = params.get("thread");
+    if (thread && /^[0-9a-f-]{36}$/i.test(thread)) {
+      setPanelOpen(true);
+      setOpenId(thread);
+      params.delete("thread");
+      const query = params.toString();
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${query ? `?${query}` : ""}${
+          window.location.hash
+        }`,
+      );
+    }
+  }, [setPanelOpen, setOpenId]);
+
   useEffect(() => {
     load();
     const unsubscribe = onCommentsChanged(load);

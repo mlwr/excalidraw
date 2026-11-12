@@ -8,6 +8,7 @@ import type { EventLog } from "./events.js";
 import type { Lifecycle } from "./workspace/lifecycle.js";
 import type { Search } from "./workspace/search.js";
 import type { Ai } from "./ai/service.js";
+import type { Notifications } from "./notifications/service.js";
 import type { Kysely } from "kysely";
 
 export interface RealtimeHooks {
@@ -34,6 +35,8 @@ export interface RealtimeHooks {
   ) => void;
   /** tell open editors that the scene's comments changed */
   notifyComments: (sceneId: string) => void;
+  /** tell these people's open editors that they have new notifications */
+  notifyUsers: (userIds: string[]) => void;
 }
 
 export interface AppContext {
@@ -53,6 +56,8 @@ export interface AppContext {
   search: Search;
   /** AI with the company's language model */
   ai: Ai;
+  /** in the app and by e-mail */
+  notifications: Notifications;
 }
 
 declare module "fastify" {

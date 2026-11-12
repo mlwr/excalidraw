@@ -46,9 +46,29 @@ const renderAdmin = async () => {
   );
 };
 
+const renderEmbed = async (token: string | null) => {
+  const { EmbedViewer, EmbedLoginDone } = await import(
+    "./workspace/EmbedViewer"
+  );
+  root.render(
+    <StrictMode>
+      {token ? <EmbedViewer token={token} /> : <EmbedLoginDone />}
+    </StrictMode>,
+  );
+};
+
 const dashboardLink = { href: "/", label: "Zur Übersicht" };
 
 const start = async () => {
+  // embedded scenes (T3) bring their own access check: no login redirect
+  const early = getRoute();
+  if (early.kind === "embed") {
+    return renderEmbed(early.token);
+  }
+  if (early.kind === "embedLogin") {
+    return renderEmbed(null);
+  }
+
   // intranet fork: the app starts only with a valid company login
   const session = await bootstrapSession();
   if (session.status === "redirecting") {

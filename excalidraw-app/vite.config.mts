@@ -322,7 +322,13 @@ export default defineConfig(({ mode }) => {
           ],
           // login, API and websockets must always reach the server, never
           // the cached app shell (otherwise the login redirect would loop)
-          navigateFallbackDenylist: [/^\/api\//, /^\/socket\.io\//],
+          // /embed pages need the server's own headers (frame-ancestors)
+          navigateFallbackDenylist: [
+            /^\/api\//,
+            /^\/socket\.io\//,
+            /^\/embed\//,
+            /^\/embed-login/,
+          ],
           // mermaid chunks are excluded here rather than via `globIgnores`
           // as their file names are arbitrary
           manifestTransforms: [

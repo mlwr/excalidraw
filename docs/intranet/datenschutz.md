@@ -14,8 +14,16 @@ Diese Seite beschreibt, welche personenbezogenen Daten Excalidraw im Intranet sp
 | „Zuletzt geöffnet“ | wer wann welche Szene geöffnet hat | – | nach `VISIT_RETENTION_DAYS` (Standard 180 Tage) |
 | Audit-Log und Aktivität | Zeit, Person (ID und Name), Art des Ereignisses, betroffene Szene oder Collection (mit Namen), IP-Adresse, Browser-Kennung | nur App-Admins sehen das Audit-Log; die Aktivität zeigt keine Adressen und nur Ereignisse sichtbarer Szenen | nach `AUDIT_RETENTION_DAYS` (Standard 365 Tage) |
 | API-Tokens | Name, Hash des Tokens, letzte Nutzung | nur Hashes | widerrufene und abgelaufene Tokens nach 90 Tagen |
+| Benachrichtigungen | wer wen wo erwähnt, wem geantwortet oder mit wem geteilt hat (Namen der Szene oder Collection, keine Kommentartexte), gelesen ja/nein, E-Mail verschickt ja/nein | nur für die Person selbst sichtbar | nach 90 Tagen, beim Entfernen der Person |
+| E-Mail-Einstellungen | welche Benachrichtigungen per E-Mail kommen | – | beim Entfernen der Person |
+| KI-Nutzung | Anzahl Anfragen und Tokens pro Person, Tag und Funktion (für das Tageslimit); Eingaben und Antworten werden nicht gespeichert | Admins sehen nur Summen pro Tag | nach `AUDIT_RETENTION_DAYS`, beim Entfernen der Person |
+| Bibliotheken | eigene, Team- und Firmenbibliotheken (Formen und Symbole) | verschlüsselt wie Szenen | eigene beim Entfernen der Person; Team- und Firmenbibliotheken, wenn ihre Verantwortlichen sie löschen |
 | Server-Logs | Anfragen mit Pfad, Status und Adresse (stdout) | Cookies und Authorization-Header geschwärzt | nach den Regeln der Log-Plattform des Clusters (Empfehlung: 30 Tage) |
 | Backups | alles oben, verschlüsselte Inhalte bleiben verschlüsselt | getrennt vom Schlüssel aufbewahren | nach `backup.keep` Nächten (Standard 14) |
+
+Was in die KI-Funktionen eingegeben wird (Text zu Diagramm, Wireframe zu Code mit dem Bild des Frames), geht an das Sprachmodell des Unternehmens und von dort zurück; der Server speichert davon nichts. Für das Sprachmodell gelten dessen eigene Regeln (Logs des Modellservers).
+
+Eingebettete Szenen (`/embed/…`) zeigen den aktuellen Stand allen Angemeldeten mit dem Link; erlaubt der Workspace „ohne Anmeldung“, allen im Netz, die den Link kennen. Wer den Link abschaltet, beendet die Einbettung sofort.
 
 Live-Sitzungen (Mauszeiger, Auswahl) laufen über den Server, werden aber nicht gespeichert. Ad-hoc-Sitzungen und Teilen-Links des Original-Excalidraw (`/#room=`, `/#json=`) sind Ende-zu-Ende-verschlüsselt; der Server sieht ihre Schlüssel nie.
 
@@ -52,6 +60,7 @@ Dabei
 
 - übernimmt eine gewählte Nachfolge die persönlichen Szenen („Meine Szenen“) in allen Workspaces; ohne Nachfolge kommen sie in den Papierkorb und werden nach dessen Frist gelöscht (bis dahin kann die Admin-Person, die entfernt hat, einzelne in ihre eigenen „Meine Szenen“ zurückholen),
 - werden Name, E-Mail, Benutzername, Rollen und Gruppen gelöscht; die Person heißt danach überall „Gelöschte Person“ (in Szenen, Kommentaren, Versionen, Aktivität und Audit-Log),
+- werden ihre Benachrichtigungen, E-Mail-Einstellungen, KI-Zähler und ihre eigene Bibliothek gelöscht,
 - werden IP-Adressen und Browser-Kennungen ihrer Einträge im Audit-Log gelöscht, ebenso ihr Name in Einträgen über sie (z. B. „Person gesperrt“), die Namen ihrer API-Tokens und ihr Benutzername bei abgelehnten Anmeldungen; die Nachfolge steht dort nur als ID,
 - enden Sitzungen und API-Tokens; Freigaben, Mitgliedschaften und „Zuletzt geöffnet“ werden gelöscht,
 - wird die Verknüpfung mit dem Keycloak-Konto gelöst: meldet sich dasselbe Konto später an, entsteht ein neues, leeres Konto.

@@ -33,7 +33,13 @@ export const SceneShareContent = ({
         canManage: boolean;
         collection: { name: string; kind: "personal" | "team" };
         readLinkUrl: string | null;
-        policies: { readLinks: boolean; directSharing: boolean };
+        embedUrl: string | null;
+        policies: {
+          readLinks: boolean;
+          directSharing: boolean;
+          embeds: boolean;
+          embedsWithoutLogin: boolean;
+        };
       }
   >({ status: "loading" });
   const [saving, setSaving] = useState(false);
@@ -70,6 +76,30 @@ export const SceneShareContent = ({
       setMessage(error.message);
     }
   };
+
+  const setEmbed = async (enabled: boolean) => {
+    setMessage(null);
+    try {
+      if (enabled) {
+        const { url } = await workspaceApi.createEmbed(scene.id);
+        setState({ ...state, embedUrl: url });
+      } else {
+        await workspaceApi.deleteEmbed(scene.id);
+        setState({ ...state, embedUrl: null });
+      }
+    } catch (error: any) {
+      setMessage(error.message);
+    }
+  };
+
+  const embedCode = state.embedUrl
+    ? `<iframe src="${
+        state.embedUrl
+      }" width="100%" height="600" style="border:0" allowfullscreen title="${scene.name.replace(
+        /"/g,
+        "&quot;",
+      )}"></iframe>`
+    : "";
 
   // the workspace's policies (T5) may switch sharing off
   const canShare = state.canManage && state.policies.directSharing;
@@ -182,6 +212,49 @@ export const SceneShareContent = ({
             </div>
           )}
           <p className="ws-muted">Abschalten macht den Link sofort ungültig.</p>
+        </section>
+      )}
+
+      {state.canManage && state.policies.embeds && (
+        <section>
+          <h3>In Wiki und Intranet einbetten</h3>
+          <label className="ws-toggle">
+            <input
+              type="checkbox"
+              checked={!!state.embedUrl}
+              onChange={(event) => setEmbed(event.target.checked)}
+            />
+            Einbettungs-Link (Nur-Ansicht, aktualisiert sich selbst)
+          </label>
+          {state.embedUrl && (
+            <>
+              <div className="ws-copy-row">
+                <input
+                  className="ws-input"
+                  readOnly
+                  value={embedCode}
+                  aria-label="Code zum Einbetten"
+                />
+                <Button
+                  onClick={async () =>
+                    setMessage(
+                      (await copy(embedCode))
+                        ? "Code zum Einbetten kopiert."
+                        : "Kopieren nicht möglich.",
+                    )
+                  }
+                >
+                  Kopieren
+                </Button>
+              </div>
+              <p className="ws-muted">
+                {state.policies.embedsWithoutLogin
+                  ? "Sichtbar für alle, die die Seite sehen, auch ohne Anmeldung."
+                  : "Sichtbar für angemeldete Mitarbeitende. Seiten auf anderen Domains brauchen dafür die Freigabe „ohne Anmeldung“ im Workspace."}{" "}
+                Abschalten macht den Link sofort ungültig.
+              </p>
+            </>
+          )}
         </section>
       )}
 

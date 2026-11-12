@@ -6,6 +6,7 @@
  *   /s/<id>      editor with a workspace scene
  *   /v/<token>   read-only link, resolved to /s/<id>
  *   /admin       administration (app and workspace admins)
+ *   /embed/<t>   scene embedded in an intranet page (T3), read-only
  */
 
 export type AppRoute =
@@ -13,7 +14,9 @@ export type AppRoute =
   | { kind: "local" }
   | { kind: "scene"; sceneId: string }
   | { kind: "readLink"; token: string }
-  | { kind: "admin" };
+  | { kind: "admin" }
+  | { kind: "embed"; token: string }
+  | { kind: "embedLogin" };
 
 export const LOCAL_EDITOR_PATH = "/local";
 export const ADMIN_PATH = "/admin";
@@ -37,6 +40,13 @@ export const getRoute = (location: Location = window.location): AppRoute => {
   }
   if (path === ADMIN_PATH) {
     return { kind: "admin" };
+  }
+  const embed = path.match(/^\/embed\/([a-zA-Z0-9_-]{16,64})$/);
+  if (embed) {
+    return { kind: "embed", token: embed[1] };
+  }
+  if (path === "/embed-login") {
+    return { kind: "embedLogin" };
   }
   // upstream links (live sessions, share links, library installs) open the
   // editor at the root path

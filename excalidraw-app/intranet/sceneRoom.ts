@@ -54,3 +54,18 @@ export const onCommentsChanged = (listener: () => void) => {
 export const notifyCommentsChanged = () => {
   commentListeners.forEach((listener) => listener());
 };
+
+// --- notifications (Z3): the server's push, for the bell -------------------
+
+const notificationListeners = new Set<() => void>();
+
+export const onNotificationsChanged = (listener: () => void) => {
+  notificationListeners.add(listener);
+  return () => {
+    notificationListeners.delete(listener);
+  };
+};
+
+export const notifyNotificationsChanged = () => {
+  notificationListeners.forEach((listener) => listener());
+};

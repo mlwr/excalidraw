@@ -120,6 +120,44 @@ search:
   # words in the database); false = search scene names only
   content: true
 
+# AI with your own language model (K1, K2): any OpenAI-compatible endpoint
+# (vLLM, Ollama, LiteLLM, Azure OpenAI). Empty baseUrl = no AI.
+ai:
+  # e.g. http://vllm.ki.svc:8000/v1
+  baseUrl: ""
+  # model for text to diagram, e.g. google/gemma-4-31b-it or qwen3.8-27b
+  model: ""
+  # model that understands images, for wireframe to code; empty = off
+  visionModel: ""
+  # API key of the endpoint, if it needs one (or existingSecret)
+  apiKey: ""
+  existingSecret: ""
+  existingSecretKey: ai-api-key
+  maxTokens: 4096
+  timeoutSeconds: 180
+  # defaults; admins change them under /admin -> KI
+  dailyLimit: 50
+  requiredRole: ""
+
+# e-mail notifications through your SMTP relay (Z3); empty host = in-app only
+smtp:
+  host: ""
+  port: 25
+  # TLS from the start (port 465); otherwise STARTTLS when offered
+  secure: false
+  user: ""
+  password: ""
+  existingSecret: ""
+  existingSecretKey: smtp-password
+  from: "Excalidraw <excalidraw@intranet.example>"
+  # minutes an unread notification waits before it is e-mailed
+  delayMinutes: 10
+
+# intranet pages that may embed scenes (T3), as CSP frame-ancestors;
+# empty = https://*.<parent domain of publicUrl>
+embed:
+  frameAncestors: []
+
 # Prometheus metrics on a port of their own (not exposed by the ingress)
 metrics:
   enabled: true

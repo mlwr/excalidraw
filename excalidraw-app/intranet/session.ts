@@ -54,6 +54,7 @@ export const getRuntimeConfig = () => runtimeConfig;
 
 /** upload limit for encoded (compressed + encrypted) files */
 export const getMaxFileUploadBytes = () => runtimeConfig.maxFileSizeBytes;
+export const getMaxImageDimension = () => runtimeConfig.maxImageDimension;
 
 /**
  * Limits for images inserted into the editor. Encoded files are about a third

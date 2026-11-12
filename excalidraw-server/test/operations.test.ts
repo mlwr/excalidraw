@@ -622,6 +622,8 @@ describeWithDb("operations (phase 4)", () => {
       collectionCreation: "admins",
       export: false,
       trashRetentionDays: 7,
+      embeds: true,
+      embedsWithoutLogin: false,
     });
     // what exists stops working
     const token = String(link.url).split("/").pop();

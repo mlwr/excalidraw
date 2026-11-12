@@ -291,6 +291,70 @@ export const createCommentService = (
       data: { name: access.scene.name },
     });
 
+  /**
+   * Z3: the mentioned hear they were mentioned; on a reply, the others
+   * in the thread hear about it (if they still see the scene)
+   */
+  const tell = (
+    actor: Actor,
+    access: SceneAccess,
+    threadId: string,
+    mentions: string[],
+    isReply: boolean,
+  ) => {
+    const base = {
+      actor: { id: actor.id, name: actor.name || "" },
+      sceneId: access.scene.id,
+      threadId,
+      data: { sceneName: access.scene.name },
+    };
+    if (mentions.length) {
+      ctx.notifications.notify({ ...base, type: "mention", userIds: mentions });
+    }
+    if (!isReply) {
+      return;
+    }
+    void (async () => {
+      const thread = await db
+        .selectFrom("comment_threads")
+        .select("created_by")
+        .where("id", "=", threadId)
+        .executeTakeFirst();
+      const authors = await db
+        .selectFrom("comments")
+        .select("author_id")
+        .distinct()
+        .where("thread_id", "=", threadId)
+        .where("deleted_at", "is", null)
+        .execute();
+      const candidates = [
+        ...new Set(
+          [thread?.created_by, ...authors.map((row) => row.author_id)].filter(
+            (id): id is string =>
+              !!id && id !== actor.id && !mentions.includes(id),
+          ),
+        ),
+      ];
+      if (!candidates.length) {
+        return;
+      }
+      const users = await db
+        .selectFrom("users")
+        .selectAll()
+        .where("id", "in", candidates)
+        .where("disabled_at", "is", null)
+        .execute();
+      const still: string[] = [];
+      for (const user of users) {
+        const seen = await sceneAccess(db, actorOf(user), access.scene.id);
+        if (seen && seen.role !== "none") {
+          still.push(user.id);
+        }
+      }
+      ctx.notifications.notify({ ...base, type: "reply", userIds: still });
+    })().catch(() => {});
+  };
+
   const createThread = async (
     actor: Actor,
     sceneId: string,
@@ -342,6 +406,7 @@ export const createCommentService = (
     });
     changed(access.scene.id);
     log("comment.created", actor, access, threadId);
+    tell(actor, access, threadId, mentions, false);
     return one(actor, access, threadId);
   };
 
@@ -372,6 +437,7 @@ export const createCommentService = (
     });
     changed(access.scene.id);
     log("comment.replied", actor, access, thread.id);
+    tell(actor, access, thread.id, mentions, true);
     return one(actor, access, thread.id);
   };
 
