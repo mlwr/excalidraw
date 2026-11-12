@@ -50,6 +50,9 @@ export const setLocallyHiddenElements = (ids: Iterable<string>) => {
   locallyHiddenNonce++;
 };
 
+/** hidden on this canvas: not drawn, not embedded, not hit */
+export const isLocallyHidden = (id: string) => locallyHidden.has(id);
+
 export class Renderer {
   private scene: Scene;
 

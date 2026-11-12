@@ -222,23 +222,32 @@ Eine eingebettete Szene ist eine eigene Seite (`/embed/<token>`), die Intranetse
 
 Unter „Verwaltung → Editor“ tragen App-Admins die Hosts ein, deren Seiten Szenen mit dem Werkzeug „Web-Einbettung“ zeigen dürfen (`wiki.intranet.example`, `*.intranet.example`, mit Port `grafana.intranet.example:8443`; nur https). Externe Dienste, die der Editor kennt (YouTube, Vimeo, Figma, Google Drive und andere), sind aus, bis jemand sie dort einschaltet. Die Liste gilt im Editor und in der Content-Security-Policy (`frame-src`) der App; `CSP_FRAME_SRC` bleibt zusätzlich fest erlaubt. Die eingebettete Seite muss das Einbetten selbst zulassen (ihre `frame-ancestors` bzw. `X-Frame-Options`).
 
-Damit Änderungen sofort wirken, holt die App ihre Seiten immer zuerst vom Server und nutzt die zwischengespeicherte Fassung nur ohne Verbindung.
+Damit Änderungen sofort wirken, holt die App ihre Seiten immer zuerst vom Server (auch `/` und `/index.html`). Nur für den Fall ohne Verbindung (dann startet der Editor im Browser) hält der Service Worker eine einzige Kopie der Seite, nicht eine pro Adresse; Leselinks mit ihren Tokens bleiben so nicht im Browser liegen. Dienste, die der Editor mit Skripten des Anbieters zeigt (X/Twitter, Reddit, GitHub Gist), bleiben auch mit externen Diensten aus: Die CSP ließe ihre Skripte nicht zu.
 
 ### Firmenschriften
 
-Unter „Verwaltung → Editor“ laden App-Admins Schriften hoch (TrueType, OpenType oder WOFF2, bis 10 MB, höchstens 20). Der Server speichert sie als WOFF2 mit ihren Maßen; im Schriftmenü erscheinen sie für alle beim nächsten Laden des Editors, Exporte (auch die Bilder der API) betten sie ein. Bitte nur Schriften hochladen, deren Lizenz das Einbetten in Bilder und PDFs erlaubt. Eine entfernte Schrift fehlt danach in neuen Zeichnungen; vorhandene Texte erscheinen in einer Ersatzschrift.
+Unter „Verwaltung → Editor“ laden App-Admins Schriften hoch (TrueType, OpenType oder WOFF2, bis 10 MB, höchstens 20). Der Server speichert sie als WOFF2 mit ihren Maßen; im Schriftmenü erscheinen sie für alle beim nächsten Laden des Editors, Exporte (auch die Bilder der API) betten sie ein. Bitte nur Schriften hochladen, deren Lizenz das Einbetten in Bilder und PDFs erlaubt; die Schriftdateien liefert der Server wie die eingebauten Schriften ohne Anmeldung aus (eingebettete Szenen brauchen sie), also an alle, die die App im Netz erreichen. Eine entfernte Schrift wird gelöscht (Datei und wer sie hochgeladen hat); vorhandene Texte erscheinen danach in einer Ersatzschrift. Mehrere Server-Instanzen sehen neue oder entfernte Schriften nach spätestens zehn Sekunden.
 
 ### Bibliothekskatalog
 
-`/libraries` ersetzt libraries.excalidraw.com: Alle Angemeldeten veröffentlichen dort Bibliotheken (eine `.excalidrawlib`-Datei oder eine Bibliothek, die sie pflegen), durchsuchen den Katalog und übernehmen Einträge in die eigene oder eine Team-Bibliothek. Öffentliche Bibliotheken übernimmt man, indem man ihre Datei außerhalb herunterlädt und hier veröffentlicht. Ändern oder entfernen dürfen die Person, die einen Eintrag veröffentlicht hat, und App-Admins. Vorschaubilder rendert der Server selbst.
+`/libraries` ersetzt libraries.excalidraw.com: Alle Angemeldeten veröffentlichen dort Bibliotheken (eine `.excalidrawlib`-Datei oder eine Bibliothek, die sie pflegen), durchsuchen den Katalog und übernehmen Einträge in die eigene oder eine Team-Bibliothek. Öffentliche Bibliotheken übernimmt man, indem man ihre Datei außerhalb herunterlädt und hier veröffentlicht. Ändern oder entfernen dürfen die Person, die einen Eintrag veröffentlicht hat, und App-Admins. Vorschaubilder rendert der Server selbst (im Renderer-Prozess, s. u.). Elemente in Bibliotheken dürfen höchstens 100 000 Pixel groß sein und höchstens 10 Millionen Pixel vom Ursprung entfernt liegen. Wer einen Eintrag erneut übernimmt, bekommt Änderungen der Autorin oder des Autors; ist nichts neu, bleibt die eigene Bibliothek unverändert.
 
 ### Präsentieren über das Netz
 
-Fernbedienung (Smartphone) und Live-Präsentation laufen über die Websocket-Verbindung des Servers; es wird nichts gespeichert. Smartphones brauchen Zugang zur App (Firmennetz oder VPN) und melden sich wie am Rechner an. Wer den Link einer Live-Präsentation kennt und angemeldet ist, sieht die gezeigten Folien; die Szene selbst bekommt das Publikum nicht.
+Fernbedienung (Smartphone) und Live-Präsentation laufen über die Websocket-Verbindung des Servers; es wird nichts gespeichert. Smartphones brauchen Zugang zur App (Firmennetz oder VPN) und müssen mit demselben Konto angemeldet sein wie der präsentierende Rechner: Wer den QR-Code mit einem anderen Konto scannt, erreicht die Präsentation nicht. Wer den Link einer Live-Präsentation kennt und angemeldet ist, sieht die gezeigten Folien; die Szene selbst bekommt das Publikum nicht. Den Namen der vortragenden Person setzt der Server. Jede Verbindung darf nur begrenzt senden (Nachrichten pro Sekunde, Folien höchstens 4 MB und 24 MB pro Minute), weil im Cluster jede größere Nachricht kurz als Zeile in PostgreSQL landet. Nach einem Verbindungsabbruch verbinden sich Präsentation, Fernbedienung und Publikum von selbst wieder.
 
 ### Kommandozeile und Bilder
 
-Der Server rendert Szenen als SVG oder PNG (`GET /api/v1/scenes/<id>/image`, [API](./api.md#bilder-und-kommandozeile)) mit dem Export des Editors und den Schriften aus dem Image; PNG entsteht mit resvg (WebAssembly). Höchstens 16 Megapixel je Bild, ein Bild nach dem anderen (bei mehr als acht wartenden Anfragen antwortet er mit 503). Das Kommandozeilen-Tool liegt unter `/api/v1/cli` zum Herunterladen.
+Der Server rendert Szenen als SVG oder PNG (`GET /api/v1/scenes/<id>/image`, [API](./api.md#bilder-und-kommandozeile)) mit dem Export des Editors und den Schriften aus dem Image; PNG entsteht mit resvg (WebAssembly). Höchstens 16 Megapixel je Bild, ein Bild nach dem anderen (bei mehr als acht Anfragen in Arbeit antwortet er mit 503). Das Kommandozeilen-Tool liegt unter `/api/v1/cli` zum Herunterladen.
+
+Wie aufwendig ein Bild ist, bestimmt, was gezeichnet wurde. Deshalb rendert ein eigener Prozess (`render-worker.mjs` neben `server.mjs` im Image), ohne Umgebungsvariablen und damit ohne Geheimnisse:
+
+- höchstens 384 MB JavaScript-Speicher und 20 Sekunden je Bild; wer darüber kommt, wird beendet und beim nächsten Bild neu gestartet (Antwort 422 `too_complex`), der Server läuft weiter;
+- ein Renderer, der nach einem Bild mehr als 512 MB belegt, wird ersetzt (WebAssembly gibt Speicher nicht zurück);
+- wird der Speicher des Pods knapp, beendet der Kernel zuerst den Renderer (`oom_score_adj`), nicht den Server;
+- Elemente über 1 Million Pixel Größe oder weiter als 100 Millionen Pixel vom Ursprung zeichnet er nicht; eingebettete Bilder über 16 Megapixel (4096 × 4096) fehlen im PNG, Bilder aus dem Netz nimmt er nie.
+
+Die API nimmt Elemente über diesen Grenzen gar nicht erst an.
 
 Neu im Image, mit eigener Lizenz: resvg-wasm (MPL 2.0, unverändert übernommen, Quelltext bei den Autoren unter github.com/yisibl/resvg-js), linkedom (ISC) im Server und qrcode-generator (MIT) in der App.
 

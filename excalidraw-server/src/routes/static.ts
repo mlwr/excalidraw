@@ -152,6 +152,8 @@ export const registerStatic = async (
   };
 
   app.get("/", (_request, reply) => sendIndexHtml(reply));
+  // the same page under its file name: with today's headers, too
+  app.get("/index.html", (_request, reply) => sendIndexHtml(reply));
 
   // single page app: unknown non-API GET routes get index.html
   app.setNotFoundHandler((request, reply) => {

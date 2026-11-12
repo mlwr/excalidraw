@@ -1044,7 +1044,7 @@ describeE2E("browser end-to-end", () => {
     await card.locator(".ws-catalog__preview img").waitFor();
     await card.locator("button:has-text('Hinzufügen')").click();
     await catalog.waitForSelector(
-      "text=1 Eintrag aus „Netzwerk-Symbole“ hinzugefügt.",
+      "text=Aus „Netzwerk-Symbole“: 1 Eintrag hinzugefügt.",
     );
 
     // --- E2 and E3: the admins allow a wiki and add a company font -------------
@@ -1079,10 +1079,20 @@ describeE2E("browser end-to-end", () => {
       "Firma Sans",
     ]);
 
-    // --- P2: new slides with a layout, also with Alt+A ------------------------
+    // the start page comes from the server even with the service worker
+    // running: its CSP already lists the wiki the admins just allowed
     const editor = await bobContext.newPage();
     await editor.goto(`${APP_URL}/`);
     await editor.waitForSelector(".ws-dashboard .ws-main h1");
+    await editor.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+    const reloaded = await editor.reload();
+    expect(reloaded?.fromServiceWorker()).toBe(true);
+    expect(reloaded?.headers()["content-security-policy"]).toMatch(
+      /frame-src [^;]*https:\/\/wiki\.intranet\.example/,
+    );
+    await editor.waitForSelector(".ws-dashboard .ws-main h1");
+
+    // --- P2: new slides with a layout, also with Alt+A ------------------------
     await editor.click(".ws-main__actions >> text=Neue Szene");
     await editor.waitForURL(/\/s\/[\w-]+$/);
     await editor.waitForSelector(".welcome-screen-center", { timeout: 30000 });

@@ -10,17 +10,13 @@
  */
 import { sql } from "kysely";
 
-import {
-  FontFileError,
-  prepareCompanyFont,
-  registerRenderFont,
-  unregisterRenderFont,
-} from "../../vendor/elements.mjs";
+import { FontFileError, prepareCompanyFont } from "../../vendor/elements.mjs";
 import { HttpError } from "../util/http.js";
 import { queryParam } from "../util/validate.js";
 
 import type { AppContext } from "../context.js";
 import type { FontMetrics } from "../db/schema.js";
+import type { RenderFont } from "../render/renderer.js";
 import type {
   FastifyInstance,
   FastifyRequest,
@@ -70,9 +66,16 @@ export interface CompanyFont {
   metrics: FontMetrics;
 }
 
+/** how long a server instance trusts its list (others may change it) */
+const LIST_TTL_MS = 10_000;
+
 export const createCompanyFonts = (ctx: AppContext) => {
   const { db } = ctx;
-  let cached: CompanyFont[] | null = null;
+  let cached: { at: number; fonts: CompanyFont[] } | null = null;
+  let forRenderer: { key: string; fonts: RenderFont[] } = {
+    key: "",
+    fonts: [],
+  };
 
   const describe = (row: {
     id: number;
@@ -88,38 +91,47 @@ export const createCompanyFonts = (ctx: AppContext) => {
   });
 
   const list = async () => {
-    if (!cached) {
+    if (!cached || Date.now() - cached.at > LIST_TTL_MS) {
       const rows = await db
         .selectFrom("company_fonts")
         .select(["id", "family", "metrics", "created_at"])
-        .where("deleted_at", "is", null)
         .orderBy("family")
         .execute();
-      cached = rows.map(describe);
+      cached = { at: Date.now(), fonts: rows.map(describe) };
     }
-    return cached;
-  };
-
-  /** the server's own renderer (API images) knows them, too */
-  const loadIntoRenderer = async () => {
-    const rows = await db
-      .selectFrom("company_fonts")
-      .select(["id", "family", "metrics", "file"])
-      .where("deleted_at", "is", null)
-      .execute();
-    for (const row of rows) {
-      registerRenderFont({
-        id: row.id,
-        family: row.family,
-        metrics: row.metrics,
-        woff2: new Uint8Array(row.file),
-      });
-    }
+    return cached.fonts;
   };
 
   return {
     list,
-    loadIntoRenderer,
+    /** the fonts with their files, for the server's renderer */
+    forRenderer: async () => {
+      const fonts = await list();
+      const key = fonts.map((font) => font.url).join(" ");
+      if (key !== forRenderer.key) {
+        const rows = fonts.length
+          ? await db
+              .selectFrom("company_fonts")
+              .select(["id", "family", "metrics", "file"])
+              .where(
+                "id",
+                "in",
+                fonts.map((font) => font.id),
+              )
+              .execute()
+          : [];
+        forRenderer = {
+          key,
+          fonts: rows.map((row) => ({
+            id: row.id,
+            family: row.family,
+            metrics: row.metrics,
+            woff2: new Uint8Array(row.file),
+          })),
+        };
+      }
+      return forRenderer;
+    },
     forget: () => {
       cached = null;
     },
@@ -157,7 +169,6 @@ export const registerFontRoutes = (
             .selectFrom("company_fonts")
             .select(["file", "created_at"])
             .where("id", "=", Number(match[1]))
-            .where("deleted_at", "is", null)
             .executeTakeFirst()
         : undefined;
       if (!row) {
@@ -202,7 +213,6 @@ export const registerFontRoutes = (
       const active = await db
         .selectFrom("company_fonts")
         .select([sql<number>`count(*)::int`.as("count")])
-        .where("deleted_at", "is", null)
         .executeTakeFirstOrThrow();
       if (active.count >= MAX_FONTS) {
         throw new HttpError(
@@ -244,12 +254,6 @@ export const registerFontRoutes = (
         throw error;
       }
       fonts.forget();
-      registerRenderFont({
-        id: row.id,
-        family: row.family,
-        metrics: row.metrics,
-        woff2: prepared.woff2,
-      });
       ctx.events.record({
         type: "admin.font_added",
         actor: request.auth!.user,
@@ -271,18 +275,16 @@ export const registerFontRoutes = (
       const id = /^\d{1,9}$/.test(request.params.fontId)
         ? Number(request.params.fontId)
         : -1;
+      // gone for good, file and who uploaded it (ids are never reused)
       const removed = await db
-        .updateTable("company_fonts")
-        .set({ deleted_at: sql`now()` })
+        .deleteFrom("company_fonts")
         .where("id", "=", id)
-        .where("deleted_at", "is", null)
         .returning(["id", "family"])
         .executeTakeFirst();
       if (!removed) {
         throw new HttpError(404, "not_found", "Diese Schrift gibt es nicht.");
       }
       fonts.forget();
-      unregisterRenderFont(removed.id);
       ctx.events.record({
         type: "admin.font_removed",
         actor: request.auth!.user,

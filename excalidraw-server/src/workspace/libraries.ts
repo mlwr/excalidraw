@@ -17,7 +17,7 @@ import {
   openSceneKey,
   sealSceneKey,
 } from "../util/crypto.js";
-import { renderLibraryPreview } from "../../vendor/elements.mjs";
+import { geometryProblem, LIBRARY_LIMITS } from "../../vendor/elements.mjs";
 import { HttpError } from "../util/http.js";
 import {
   containsPattern,
@@ -66,7 +66,10 @@ const cleanName = (value: unknown) => {
   return value.replace(/\s+/g, " ").trim();
 };
 
-/** library items as the editor stores them; checked for shape, not drawn */
+/**
+ * library items as the editor stores them: checked for shape and for sane
+ * sizes (whoever adds a library draws its items), not drawn
+ */
 const parseItems = (value: unknown, maxBytes: number) => {
   if (!Array.isArray(value) || value.length > MAX_ITEMS) {
     throw new HttpError(
@@ -91,6 +94,19 @@ const parseItems = (value: unknown, maxBytes: number) => {
         "invalid_items",
         "Ungültiger Bibliothekseintrag.",
       );
+    }
+    for (const element of item.elements as unknown[]) {
+      const problem =
+        element && typeof element === "object"
+          ? geometryProblem(element as Record<string, unknown>, LIBRARY_LIMITS)
+          : "kein Element";
+      if (problem) {
+        throw new HttpError(
+          400,
+          "invalid_items",
+          `Ungültiger Bibliothekseintrag: ${problem}.`,
+        );
+      }
     }
   }
   const json = JSON.stringify(value);
@@ -630,10 +646,7 @@ export const registerLibraryRoutes = (
     try {
       preview = encryptWithSceneKey(
         key,
-        Buffer.from(
-          await renderLibraryPreview(items as { elements?: unknown[] }[]),
-          "utf8",
-        ),
+        Buffer.from(await ctx.render.preview(items), "utf8"),
       );
     } catch (error) {
       // a library the renderer cannot draw is still a library
@@ -868,15 +881,36 @@ export const registerLibraryRoutes = (
       const target =
         typeof input.libraryId === "string" ? input.libraryId : "personal";
       const { library } = await libraryFor(request, target, "edit");
-      const current = readItems(library) as { id: string }[];
-      const known = new Set(current.map((item) => item.id));
-      const added = (catalogItems(row) as { id: string }[]).filter(
-        (item) => !known.has(item.id),
+      type Item = { id: string; name?: unknown; elements?: unknown };
+      const current = readItems(library) as Item[];
+      const mine = new Map(current.map((item) => [item.id, item]));
+      // the same item: same id, same drawing and name (an author's update
+      // replaces the old copy)
+      const drawing = (item: Item) =>
+        JSON.stringify([item.elements ?? null, item.name ?? null]);
+      const offered = catalogItems(row) as Item[];
+      const added = offered.filter((item) => !mine.has(item.id));
+      const updated = new Map(
+        offered
+          .filter(
+            (item) =>
+              mine.has(item.id) &&
+              drawing(item) !== drawing(mine.get(item.id)!),
+          )
+          .map((item) => [item.id, { ...item, status: "published" }]),
       );
+      if (!added.length && !updated.size) {
+        // nothing new: nothing written, no download counted
+        return {
+          added: 0,
+          updated: 0,
+          revision: Number(library.revision),
+        };
+      }
       const { items, json } = parseItems(
         [
           ...added.map((item) => ({ ...item, status: "published" })),
-          ...current,
+          ...current.map((item) => updated.get(item.id) ?? item),
         ],
         config.limits.maxSceneBytes,
       );
@@ -909,7 +943,11 @@ export const registerLibraryRoutes = (
         .where("id", "=", row.id)
         .execute();
       record(request, library, "items", { items: items.length });
-      return { added: added.length, revision: Number(saved.revision) };
+      return {
+        added: added.length,
+        updated: updated.size,
+        revision: Number(saved.revision),
+      };
     },
   );
 };

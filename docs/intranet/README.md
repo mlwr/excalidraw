@@ -65,7 +65,7 @@ Ein Pod liefert die gebaute App aus, beantwortet die API unter `/api` und betrei
 | `/embed/<token>` | In Wiki- oder Intranetseiten eingebettete Szene (Nur-Ansicht, aktualisiert sich selbst) |
 | `/libraries` | Bibliothekskatalog des Unternehmens: Bibliotheken veröffentlichen, durchsuchen, mit einem Klick übernehmen (auch über „Bibliotheken durchsuchen“ im Editor) |
 | `/presenter#…` | Referentenansicht einer laufenden Präsentation (öffnet sich aus der Präsentation) |
-| `/remote#…` | Fernbedienung auf dem Smartphone (QR-Code in der Präsentation) |
+| `/remote#…` | Fernbedienung auf dem Smartphone (QR-Code in der Präsentation, mit demselben Konto angemeldet) |
 | `/live/<id>` | Live-Präsentation für das Publikum (Link aus der Präsentation, mit Anmeldung) |
 | `/#room=…`, `/#json=…` | Ad-hoc-Live-Sitzung bzw. Teilen-Link mit Ende-zu-Ende-Verschlüsselung (wie bisher) |
 
@@ -73,7 +73,7 @@ Rechte:
 
 - **Meine Szenen** sieht nur die Person selbst, solange sie eine Szene nicht teilt.
 - **Team-Collections** legt jede angemeldete Person an. Eingetragene Personen oder Keycloak-Gruppen erhalten „Kann ansehen“, „Kann bearbeiten“ oder „Verwaltet“. Eine Freigabe an eine Gruppe gilt auch für ihre Untergruppen (`/IT` umfasst `/IT/Architektur`). Admins (`excalidraw-admin`) sehen und verwalten alle Team-Collections.
-- **Unterordner**: Team-Collections lassen sich bis zu fünf Ebenen tief verschachteln (z. B. Abteilung › Projekt › Thema). Zugriff auf einen Ordner gilt auch für alle Ordner darin; ein Unterordner kann zusätzlich eigene Personen oder Gruppen haben. Unterordner legt an, wer im Ordner darüber bearbeiten darf; verschieben darf, wer den Ordner verwaltet. Gelöscht wird ein Ordner erst, wenn er leer ist.
+- **Unterordner**: Team-Collections lassen sich bis zu fünf Ebenen tief verschachteln (z. B. Abteilung › Projekt › Thema). Zugriff auf einen Ordner gilt auch für alle Ordner darin; ein Unterordner kann zusätzlich eigene Personen oder Gruppen haben. Unterordner legen Mitglieder des Workspace an, die im Ordner darüber bearbeiten dürfen; sie bekommen dadurch keine eigenen Rechte, der Unterordner erbt, wer was darf. Verwalten (Freigaben, umbenennen, verschieben) darf, wer den Ordner verwaltet; wer einen Unterordner auf die oberste Ebene holt, verwaltet ihn danach selbst, falls niemand sonst. Gelöscht wird ein Ordner erst, wenn er leer ist.
 - **Einzelne Szenen** lassen sich zusätzlich an Personen oder Gruppen freigeben, ohne die Collection zu öffnen.
 - **Kommentare** schreibt jede Person, die die Szene sehen darf, auch mit Leserecht. Erledigen darf, wer bearbeiten darf, und wer den Kommentar begonnen hat; löschen darf die Verfasserin bzw. der Verfasser und wer die Szene verwaltet.
 - **Workspaces**: Der allgemeine Workspace ist für alle offen. Weitere Workspaces legen App-Admins an und tragen Mitglieder (Personen oder Keycloak-Gruppen) und Workspace-Admins ein. Workspace-Admins verwalten alle Team-Collections, Mitglieder und Richtlinien ihres Workspaces (Nur-Lese-Links, direktes Teilen, wer Collections anlegt, wer exportiert, Frist im Papierkorb). Wer kein Mitglied ist, sieht dort nur, was mit ihm geteilt wurde.
@@ -84,7 +84,7 @@ Im Editor außerdem:
 
 - **Präsentieren**: Jeder Frame ist eine Folie. Hauptmenü „Präsentieren“ oder in der Seitenleiste der Tab „Folien“: neue Folie mit Layout (Titel und Inhalt, Titelfolie, zwei Spalten, Abschnitt, leer; auch mit Alt+A), Reihenfolge per Ziehen oder Pfeilen ändern, Sprechernotizen, Einblendungen (ausgewählte Elemente erscheinen erst beim nächsten Klick), ab einer Folie starten. Pfeiltasten oder Leertaste blättern (auch durch die Einblendungen), L schaltet den Laserpointer, Esc beendet.
   - „Referentenansicht“ öffnet ein zweites Fenster mit aktueller und nächster Folie, Notizen (Links klickbar) und Uhr.
-  - „Fernbedienung“ zeigt einen QR-Code: das Smartphone (im Firmennetz oder VPN, mit Anmeldung) schaltet weiter und zeigt die Notizen.
+  - „Fernbedienung“ zeigt einen QR-Code: das Smartphone (im Firmennetz oder VPN, mit demselben Konto angemeldet) schaltet weiter und zeigt die Notizen; andere Konten erreichen die Präsentation nicht.
   - „Live“ liefert einen Link für das Publikum: Zuschauende sehen die Folien im eigenen Browser (vor dem Start einen Warteraum), reagieren mit Emojis und melden sich per Handzeichen; die Präsentation zeigt Reaktionen und Meldungen mit Namen.
 - **Spotlight**: In einer Live-Sitzung oben rechts „Spotlight“: Alle anderen folgen deiner Ansicht, beim Präsentieren deinen Folien. Wer selbst schauen will, verlässt es mit einem Klick.
 - **Export als PDF oder PowerPoint**: Hauptmenü; jede Folie wird eine Seite (ohne Frames die ganze Zeichnung).

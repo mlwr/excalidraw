@@ -7,7 +7,7 @@
  */
 import { readFile } from "node:fs/promises";
 
-import { RenderError, renderScene } from "../../vendor/elements.mjs";
+import { RenderFailure } from "../render/renderer.js";
 import { HttpError } from "../util/http.js";
 import { queryParam } from "../util/validate.js";
 import { actorOf } from "../workspace/access.js";
@@ -21,27 +21,6 @@ import type {
   FastifyRequest,
   preHandlerHookHandler,
 } from "fastify";
-
-/** renders one after the other; more than this waiting: busy */
-const MAX_WAITING = 8;
-
-const createQueue = () => {
-  let tail: Promise<unknown> = Promise.resolve();
-  let waiting = 0;
-  return <T>(task: () => Promise<T>): Promise<T> => {
-    if (waiting >= MAX_WAITING) {
-      throw new HttpError(
-        503,
-        "busy",
-        "Gerade werden viele Bilder erzeugt. Bitte gleich noch einmal.",
-      );
-    }
-    waiting++;
-    const run = tail.then(task, task);
-    tail = run.catch(() => {}).finally(() => waiting--);
-    return run;
-  };
-};
 
 /** where the command line tool lies: next to the bundle, or in the sources */
 const CLI_CANDIDATES = [
@@ -62,7 +41,6 @@ export const registerRenderRoutes = (
   requireToken: preHandlerHookHandler,
 ) => {
   const { config } = ctx;
-  const queue = createQueue();
   const actor = (request: FastifyRequest) => actorOf(request.auth!.user);
 
   app.get<{ Params: { sceneId: string } }>(
@@ -109,17 +87,20 @@ export const registerRenderRoutes = (
         request.params.sceneId,
         "viewer",
       );
-      const { key, elements } = await services.workspace.readContent(access);
-      const live = elements.filter((element) => !element.isDeleted);
-      const { files } = await services.workspace.readFiles(
-        access.scene.id,
-        key,
-        live,
-      );
       let result: { svg: string } | { png: Buffer };
       try {
-        result = await queue(() =>
-          renderScene(
+        // a place in line before the scene and its pictures are read
+        result = await ctx.render.withSlot(async (render) => {
+          const { key, elements } = await services.workspace.readContent(
+            access,
+          );
+          const live = elements.filter((element) => !element.isDeleted);
+          const { files } = await services.workspace.readFiles(
+            access.scene.id,
+            key,
+            live,
+          );
+          return render.scene(
             { elements: live, files },
             {
               format,
@@ -128,12 +109,16 @@ export const registerRenderRoutes = (
               background: background === "true",
               scale,
             },
-          ),
-        );
+          );
+        });
       } catch (error) {
-        if (error instanceof RenderError) {
+        if (error instanceof RenderFailure) {
           throw new HttpError(
-            error.code === "frame_not_found" ? 404 : 422,
+            error.code === "frame_not_found"
+              ? 404
+              : error.code === "failed"
+              ? 500
+              : 422,
             error.code,
             error.message,
           );

@@ -13,6 +13,7 @@ import * as m008 from "./migrations/008_ai_usage_daily.js";
 import * as m009 from "./migrations/009_nested_collections.js";
 import * as m010 from "./migrations/010_library_catalog.js";
 import * as m011 from "./migrations/011_company_fonts.js";
+import * as m012 from "./migrations/012_company_fonts_removal.js";
 
 import type { Database } from "./schema.js";
 import type { Migration } from "kysely/migration";
@@ -51,6 +52,7 @@ const MIGRATIONS: Record<string, Migration> = {
   "009_nested_collections": m009,
   "010_library_catalog": m010,
   "011_company_fonts": m011,
+  "012_company_fonts_removal": m012,
 };
 
 export const migrateToLatest = async (db: Kysely<Database>) => {

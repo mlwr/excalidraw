@@ -1,4 +1,5 @@
 /** input checks for the REST API and the MCP server */
+import { geometryProblem, SCENE_LIMITS } from "../../vendor/elements.mjs";
 import { HttpError } from "../util/http.js";
 import { queryParam } from "../util/validate.js";
 
@@ -252,6 +253,14 @@ export const elementList = (value: unknown): unknown[] => {
         "invalid_elements",
         `elements[${index}]: kein gültiges Element.`,
       );
+    }
+    // what everyone who opens the scene draws (and the server's images)
+    const problem = geometryProblem(
+      item as Record<string, unknown>,
+      SCENE_LIMITS,
+    );
+    if (problem) {
+      throw bad("invalid_elements", `elements[${index}]: ${problem}.`);
     }
   });
   return value;

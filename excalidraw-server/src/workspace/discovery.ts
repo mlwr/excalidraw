@@ -103,12 +103,20 @@ export const createDiscovery = (
       }
       return names;
     };
-    const below = (collectionId: string): string[] => [
-      collectionId,
-      ...visible
-        .filter((item) => item.collection.parent_id === collectionId)
-        .flatMap((item) => below(item.collection.id)),
-    ];
+    /** this collection and those inside it, each once (even in a loop) */
+    const below = (collectionId: string, seen = new Set<string>()) => {
+      if (seen.has(collectionId)) {
+        return [];
+      }
+      seen.add(collectionId);
+      const ids: string[] = [collectionId];
+      for (const item of visible) {
+        if (item.collection.parent_id === collectionId) {
+          ids.push(...below(item.collection.id, seen));
+        }
+      }
+      return ids;
+    };
     const collectionIds = scope.collectionId
       ? below(scope.collectionId)
       : [undefined];

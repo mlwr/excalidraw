@@ -11,6 +11,7 @@ import type { Ai } from "./ai/service.js";
 import type { Notifications } from "./notifications/service.js";
 import type { EditorSettings } from "./editor/settings.js";
 import type { CompanyFonts } from "./editor/fonts.js";
+import type { Renderer } from "./render/renderer.js";
 import type { Kysely } from "kysely";
 
 export interface RealtimeHooks {
@@ -62,6 +63,8 @@ export interface AppContext {
   editor: EditorSettings;
   /** the company's fonts (E3) */
   fonts: CompanyFonts;
+  /** the server's renderer, in a thread of its own (I3, L3) */
+  render: Renderer;
   /** in the app and by e-mail */
   notifications: Notifications;
 }

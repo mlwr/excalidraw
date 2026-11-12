@@ -5,7 +5,13 @@
 import { unzipSync } from "fflate";
 import { afterEach, expect, it } from "vitest";
 
-import { bob, createTestEnv, describeWithDb, ORIGIN } from "./helpers/setup.js";
+import {
+  alice,
+  bob,
+  createTestEnv,
+  describeWithDb,
+  ORIGIN,
+} from "./helpers/setup.js";
 
 import type { FakeUser } from "./helpers/fakeOidc.js";
 import type { TestEnv } from "./helpers/setup.js";
@@ -209,5 +215,146 @@ describeWithDb("nested collections", () => {
     expect(
       (await member.app("POST", `/api/scenes/${scene.id}/restore`)).statusCode,
     ).toBe(200);
+  });
+
+  it("gives nobody more rights through a subfolder than the folder above", async () => {
+    env = await createTestEnv();
+    const admin = await person(alice);
+    const editor = await person(bob);
+    const guest = await person(erin);
+    const space = (
+      await admin.app("POST", "/api/admin/workspaces", { name: "Vertrieb" })
+    ).json().workspace;
+    await admin.app("PUT", `/api/admin/workspaces/${space.id}/members`, {
+      members: [
+        { type: "user", principal: admin.id, role: "admin" },
+        { type: "user", principal: editor.id, role: "member" },
+      ],
+    });
+    await admin.app("PATCH", `/api/admin/workspaces/${space.id}`, {
+      policies: { collectionCreation: "admins", directSharing: false },
+    });
+    const department = (
+      await admin.app("POST", "/api/collections", {
+        name: "Abteilung",
+        workspaceId: space.id,
+      })
+    ).json();
+    await admin.app("PUT", `/api/collections/${department.id}/grants`, {
+      grants: [
+        { type: "user", principal: admin.id, role: "manager" },
+        { type: "user", principal: editor.id, role: "editor" },
+        // a guest: no member of the workspace
+        { type: "user", principal: guest.id, role: "editor" },
+      ],
+    });
+
+    // an editor may organize the folder, and stays an editor in there
+    const inner = await editor.app("POST", "/api/collections", {
+      name: "Entwürfe",
+      parentId: department.id,
+    });
+    expect(inner.statusCode).toBe(201);
+    expect(inner.json().role).toBe("editor");
+    const grants = (
+      await editor.app("GET", `/api/collections/${inner.json().id}/grants`)
+    ).json();
+    expect(grants.grants).toEqual([]);
+    expect(grants.canManage).toBe(false);
+    // so no sharing with outsiders through it, no renaming, no moving
+    expect(
+      (
+        await editor.app("PUT", `/api/collections/${inner.json().id}/grants`, {
+          grants: [{ type: "user", principal: guest.id, role: "editor" }],
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await editor.app("PATCH", `/api/collections/${inner.json().id}`, {
+          parentId: null,
+        })
+      ).statusCode,
+    ).toBe(403);
+    // the managers above manage it
+    expect(
+      (
+        await admin.app("GET", `/api/collections/${inner.json().id}/grants`)
+      ).json().canManage,
+    ).toBe(true);
+
+    // guests do not build folders in a workspace that is not theirs
+    expect(
+      (
+        await guest.app("POST", "/api/collections", {
+          name: "Gast-Ordner",
+          parentId: department.id,
+        })
+      ).statusCode,
+    ).toBe(403);
+  });
+
+  it("keeps the tree a tree when changes come at the same moment", async () => {
+    env = await createTestEnv();
+    const lead = await person(bob);
+    const create = async (name: string, parentId?: string) =>
+      (
+        await lead.app("POST", "/api/collections", {
+          name,
+          ...(parentId ? { parentId } : {}),
+        })
+      ).json() as CollectionItem;
+
+    // two moves at once: A into B, B into A
+    for (let round = 0; round < 5; round++) {
+      const a = await create(`A${round}`);
+      const b = await create(`B${round}`);
+      const [first, second] = await Promise.all([
+        lead.app("PATCH", `/api/collections/${a.id}`, { parentId: b.id }),
+        lead.app("PATCH", `/api/collections/${b.id}`, { parentId: a.id }),
+      ]);
+      expect([first.statusCode, second.statusCode].sort()).toEqual([200, 400]);
+      const tree = await lead.collections();
+      expect(
+        tree.filter((item) => item.name.endsWith(String(round))),
+      ).toHaveLength(2);
+      expect(
+        (await lead.app("GET", `/api/export?collection=${a.id}`)).statusCode,
+      ).toBe(200);
+    }
+
+    // a folder deleted while a subfolder is created in it
+    for (let round = 0; round < 5; round++) {
+      const parent = await create(`Eltern${round}`);
+      const [removed, added] = await Promise.all([
+        lead.app("DELETE", `/api/collections/${parent.id}`),
+        lead.app("POST", "/api/collections", {
+          name: `Kind${round}`,
+          parentId: parent.id,
+        }),
+      ]);
+      // never both: no subfolder inside a deleted folder
+      expect(removed.statusCode === 204 && added.statusCode === 201).toBe(
+        false,
+      );
+    }
+
+    // back at the top, a folder keeps someone who manages it
+    const outer = await create("Außen");
+    const loose = await create("Lose", outer.id);
+    await lead.app("PUT", `/api/collections/${loose.id}/grants`, {
+      grants: [],
+    });
+    const back = await lead.app("PATCH", `/api/collections/${loose.id}`, {
+      parentId: null,
+    });
+    expect(back.statusCode).toBe(200);
+    const own = (
+      await lead.app("GET", `/api/collections/${loose.id}/grants`)
+    ).json();
+    expect(own.canManage).toBe(true);
+    expect(own.grants).toEqual([
+      expect.objectContaining({ principal: lead.id, role: "manager" }),
+    ]);
   });
 });

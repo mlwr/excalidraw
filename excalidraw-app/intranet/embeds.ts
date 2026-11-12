@@ -25,9 +25,17 @@ export const matchesHostPattern = (url: URL, pattern: string) => {
 };
 
 /**
+ * Services the editor shows through their own scripts (X/Twitter posts,
+ * Reddit posts, GitHub gists): the CSP allows no scripts from elsewhere, so
+ * they would only ever show as an empty frame.
+ */
+const SCRIPT_EMBEDS =
+  /(^|\.)(twitter\.com|x\.com|reddit\.com|gist\.github\.com)$/;
+
+/**
  * The editor's validateEmbeddable: true for allowed internal pages; for
  * everything else false, or, with external services switched on, the
- * editor's own list of known services decides.
+ * editor's own list of known services decides (except the services above).
  */
 export const createEmbedValidator = (
   settings: EmbedSettings,
@@ -44,6 +52,9 @@ export const createEmbedValidator = (
     ) {
       return true;
     }
-    return settings.external ? undefined : false;
+    if (!settings.external || SCRIPT_EMBEDS.test(url.hostname.toLowerCase())) {
+      return false;
+    }
+    return undefined;
   };
 };

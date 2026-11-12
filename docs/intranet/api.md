@@ -129,6 +129,8 @@ jq '{name: "Importiert", content: .}' szene.excalidraw | curl -X POST \
 
 Beim Ersetzen (`PUT …/content`) gewinnen geänderte Elemente gegenüber den Kopien in offenen Editoren; Elemente, die fehlen, werden gelöscht. Mit `expectedRevision` (aus `GET …/content`) schlägt das Ersetzen fehl, wenn jemand die Szene inzwischen geändert hat.
 
+Importierte Elemente haben Grenzen, die im Editor nie erreicht werden: `x` und `y` höchstens 100 Millionen Pixel vom Ursprung, `width`, `height` und `fontSize` höchstens 1 Million, höchstens 100 000 Punkte je Linie. Darüber antwortet der Server mit 400 `invalid_elements` und nennt das Element.
+
 ## Bilder und Kommandozeile
 
 Eine Szene oder einen Frame als Bild, etwa für Dokumentation oder Wikis:
@@ -151,7 +153,7 @@ curl -H "Authorization: Bearer $EXCALIDRAW_TOKEN" \
 | `background` | `true` (Standard), `false` | `false`: durchsichtig |
 | `scale` | 1 bis 4 | Pixel pro Szenenpixel |
 
-Bilder bis 16 Megapixel; größere lehnt der Server mit 422 ab (dann einen Frame wählen oder `scale` verkleinern). Höchstens 30 Bilder pro Token und Minute.
+Bilder bis 16 Megapixel; größere lehnt der Server mit 422 `too_large` ab (dann einen Frame wählen oder `scale` verkleinern). Braucht eine Szene mehr als 20 Sekunden oder zu viel Speicher, antwortet er mit 422 `too_complex`; sind gerade acht Bilder in Arbeit, mit 503 `busy` (kurz warten, noch einmal). In PNGs fehlen eingebettete Bilder über 16 Megapixel. Höchstens 30 Bilder pro Token und Minute.
 
 Das Kommandozeilen-Tool `excalidraw.mjs` (Node.js 20 oder neuer, ohne weitere Abhängigkeiten) liegt unter `/api/v1/cli`:
 

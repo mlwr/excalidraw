@@ -2,12 +2,15 @@
  * Findings of the security review of the REST API, the MCP server and the
  * comments, kept as tests.
  */
+import { connect } from "node:net";
+
 import { afterEach, expect, it } from "vitest";
 
 import { encodeFile } from "../src/workspace/content.js";
 
 import { bob, createTestEnv, describeWithDb, ORIGIN } from "./helpers/setup.js";
 
+import type { AddressInfo } from "node:net";
 import type { FakeUser } from "./helpers/fakeOidc.js";
 import type { TestEnv } from "./helpers/setup.js";
 
@@ -216,6 +219,42 @@ describeWithDb("API hardening", () => {
       );
     }
     expect(codes).toEqual([200, 200, 200, 429]);
+  });
+
+  it("counts API calls however their address is spelled", async () => {
+    env = await createTestEnv({ API_RATE_LIMIT_PER_MINUTE: "4" });
+    const bobby = await person(bob);
+    await env.built.app.listen({ host: "127.0.0.1", port: 0 });
+    const { port } = env.built.app.server.address() as AddressInfo;
+    // raw requests: no client tidies up the address on the way
+    const raw = (target: string) =>
+      new Promise<number>((resolve, reject) => {
+        const socket = connect(port, "127.0.0.1", () => {
+          socket.write(
+            `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n` +
+              `Authorization: Bearer ${bobby.token}\r\nConnection: close\r\n\r\n`,
+          );
+        });
+        let head = "";
+        socket.on("data", (chunk) => {
+          head += chunk.toString("latin1");
+        });
+        socket.on("end", () =>
+          resolve(Number(/^HTTP\/1\.1 (\d{3})/.exec(head)?.[1] || 0)),
+        );
+        socket.on("error", reject);
+      });
+    const codes = [];
+    for (const target of [
+      "/api/v1/me",
+      "/%61pi/v1/me",
+      "/api/%761/me",
+      `http://127.0.0.1:${port}/api/v1/me`,
+      "/%61pi/v1/me",
+    ]) {
+      codes.push(await raw(target));
+    }
+    expect(codes).toEqual([200, 200, 200, 200, 429]);
   });
 
   it("leaves no scene behind when an import fails", async () => {

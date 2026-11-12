@@ -410,7 +410,11 @@ export const openApiDocument = (config: Config) => ({
           },
           ...errors,
           "404": ok("Szene oder Frame nicht gefunden", ref("Error")),
-          "422": ok("Bild zu groß", ref("Error")),
+          "422": ok(
+            "Bild zu groß (too_large) oder Szene zu aufwendig (too_complex)",
+            ref("Error"),
+          ),
+          "503": ok("Gerade sind viele Bilder in Arbeit (busy)", ref("Error")),
         },
       },
     },

@@ -319,11 +319,12 @@ export default defineConfig(({ mode }) => {
             // via a static import from the main bundle, defeating lazy
             // loading. So we exclude it by name instead.
             "**/CodeMirrorEditor-*.js",
+            // intranet fork: pages always come from the server while it
+            // is reachable: its headers change at runtime (the CSP lists
+            // the hosts admins allow for embeds). A precached index.html
+            // would answer "/" itself, with the CSP it had when cached.
+            "index.html",
           ],
-          // intranet fork: pages always come from the server while it is
-          // reachable: its headers change at runtime (the CSP lists the
-          // hosts admins allow for embeds) and must not come from a cached
-          // copy of index.html; offline, the last copy still opens
           navigateFallback: null,
           // mermaid chunks are excluded here rather than via `globIgnores`
           // as their file names are arbitrary
@@ -337,8 +338,11 @@ export default defineConfig(({ mode }) => {
           ],
           runtimeCaching: [
             {
-              // login, API, websockets and /embed pages never go through
-              // the cache (otherwise the login redirect could loop)
+              // pages from the server; offline, the last one opens the
+              // browser-local editor. Every page is the same app, so one
+              // copy is kept, under one name: no address (read links carry
+              // tokens) stays behind. Login, API, websockets and /embed
+              // pages never go through here (the login redirect could loop)
               urlPattern: ({ request, url }) =>
                 request.mode === "navigate" &&
                 !/^\/(api|socket\.io|embed)(\/|-|$)/.test(url.pathname),
@@ -346,8 +350,10 @@ export default defineConfig(({ mode }) => {
               options: {
                 cacheName: "pages",
                 networkTimeoutSeconds: 10,
-                expiration: { maxEntries: 20 },
+                // (also clears what earlier versions kept per address)
+                expiration: { maxEntries: 1 },
                 cacheableResponse: { statuses: [200] },
+                plugins: [{ cacheKeyWillBeUsed: async () => "/__app-shell" }],
               },
             },
             {

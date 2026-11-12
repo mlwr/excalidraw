@@ -145,7 +145,7 @@ export const createRequireToken =
       !SAFE_METHODS.has(request.method) &&
       resolved.token.scope !== "write" &&
       // MCP: every call is a POST; tools check the scope themselves
-      !request.url.startsWith("/mcp")
+      !request.routeOptions.url?.startsWith("/mcp")
     ) {
       reply.header("www-authenticate", 'Bearer error="insufficient_scope"');
       return sendError(

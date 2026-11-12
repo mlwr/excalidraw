@@ -46,6 +46,8 @@ WORKDIR /app
 # the server is bundled into a single file: no node_modules needed at runtime
 COPY --from=build /opt/build/excalidraw-app/build /app/public
 COPY --from=build /opt/build/excalidraw-server/dist/server.mjs /app/server.mjs
+# the server's renderer (scene images, library previews) runs in its own thread
+COPY --from=build /opt/build/excalidraw-server/dist/render-worker.mjs /app/render-worker.mjs
 # the command line tool, offered for download at /api/v1/cli
 COPY --from=build /opt/build/excalidraw-server/cli/excalidraw.mjs /app/cli/excalidraw.mjs
 COPY --from=build /opt/build/excalidraw-server/dist/server.mjs.LEGAL.txt /app/THIRD-PARTY-NOTICES.txt

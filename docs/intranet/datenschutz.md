@@ -19,7 +19,7 @@ Diese Seite beschreibt, welche personenbezogenen Daten Excalidraw im Intranet sp
 | KI-Nutzung | Anzahl Anfragen und Tokens pro Person und Funktion für heute und gestern (für das Tageslimit), danach nur Summen pro Tag ohne Personenbezug; Eingaben und Antworten werden nicht gespeichert | Admins sehen nur Summen pro Tag | Zähler pro Person nach zwei Tagen, beim Entfernen der Person; Tagessummen nach `AUDIT_RETENTION_DAYS` |
 | Bibliotheken | eigene, Team- und Firmenbibliotheken (Formen und Symbole) | verschlüsselt wie Szenen | eigene beim Entfernen der Person; Team- und Firmenbibliotheken, wenn ihre Verantwortlichen sie löschen |
 | Bibliothekskatalog | veröffentlichte Bibliotheken mit Name der veröffentlichenden Person, Zeitpunkt und wie oft sie übernommen wurden (ohne Personen) | verschlüsselt wie Bibliotheken; den Namen sehen alle Angemeldeten | wenn die Person oder App-Admins den Eintrag entfernen; beim Entfernen der Person bleibt der Eintrag als „Gelöschte Person“ |
-| Firmenschriften | Schriftdateien, wer sie hochgeladen hat | – | wenn App-Admins sie entfernen (die Datei bleibt bis dahin gespeichert, auch für ältere Texte) |
+| Firmenschriften | Schriftdateien, wer sie hochgeladen hat | – | wenn App-Admins sie entfernen (dann gelöscht, Datei und Person; ältere Texte zeigen eine Ersatzschrift) |
 | Server-Logs | Anfragen mit Pfad, Status und Adresse (stdout) | Cookies und Authorization-Header geschwärzt | nach den Regeln der Log-Plattform des Clusters (Empfehlung: 30 Tage) |
 | Backups | alles oben, verschlüsselte Inhalte bleiben verschlüsselt | getrennt vom Schlüssel aufbewahren | nach `backup.keep` Nächten (Standard 14) |
 
@@ -27,7 +27,7 @@ Was in die KI-Funktionen eingegeben wird (Text zu Diagramm, Wireframe zu Code mi
 
 Eingebettete Szenen (`/embed/…`) zeigen den aktuellen Stand allen Angemeldeten mit dem Link; erlaubt der Workspace „ohne Anmeldung“, allen im Netz, die den Link kennen. Wer den Link abschaltet, beendet die Einbettung sofort.
 
-Live-Sitzungen (Mauszeiger, Auswahl) laufen über den Server, werden aber nicht gespeichert. Ebenso Fernbedienung und Live-Präsentationen: Die vortragende Person sieht, wer reagiert oder sich meldet (Name aus der Anmeldung), und wie viele zuschauen; gespeichert wird davon nichts. Ad-hoc-Sitzungen und Teilen-Links des Original-Excalidraw (`/#room=`, `/#json=`) sind Ende-zu-Ende-verschlüsselt; der Server sieht ihre Schlüssel nie.
+Live-Sitzungen (Mauszeiger, Auswahl) laufen über den Server, werden aber nicht gespeichert. Ebenso Fernbedienung und Live-Präsentationen: Die Fernbedienung erreicht nur dasselbe Konto. Die vortragende Person sieht, wer reagiert oder sich meldet (Name aus der Anmeldung), und wie viele zuschauen, aber nicht, wer zuschaut; gespeichert wird davon nichts. Im Browser hält die App für den Betrieb ohne Verbindung eine einzige Kopie ihrer Startseite, keine Adressen besuchter Seiten (Leselinks enthalten Tokens). Ad-hoc-Sitzungen und Teilen-Links des Original-Excalidraw (`/#room=`, `/#json=`) sind Ende-zu-Ende-verschlüsselt; der Server sieht ihre Schlüssel nie.
 
 ## Fristen
 

@@ -159,6 +159,18 @@ describeWithDb("company fonts", () => {
     expect(
       (await env.built.app.inject({ method: "GET", url: font.url })).statusCode,
     ).toBe(404);
+    // deleted for good: the file and who uploaded it
+    expect(
+      await env.built.ctx.db
+        .selectFrom("company_fonts")
+        .select("id")
+        .where("id", "=", font.id)
+        .executeTakeFirst(),
+    ).toBeUndefined();
+    // and the renderer draws the text in another font now
+    const fallback = await api("GET", `/api/v1/scenes/${scene.id}/image`);
+    expect(fallback.statusCode).toBe(200);
+    expect(fallback.body).not.toContain("font-family: Firma Sans; src:");
     const again = await admin.upload("Firma Sans", woff2);
     expect(again.statusCode).toBe(201);
     expect(again.json().font.id).toBeGreaterThan(bold.json().font.id);

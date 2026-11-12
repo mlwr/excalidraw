@@ -20,6 +20,8 @@ import type { Socket } from "socket.io-client";
 const REACTIONS = ["👍", "👏", "❤️", "😂", "😮", "🎉", "🤔"];
 
 interface LiveState {
+  /** which presentation (stamped by the server) */
+  liveId?: string;
   started?: boolean;
   ended?: boolean;
   index?: number;
@@ -48,6 +50,10 @@ export const LivePage = ({ liveId }: { liveId: string }) => {
         }
         socket.current = connection;
         connection.on("live-state", (next: LiveState) => {
+          // only this presentation's slides
+          if (next?.liveId !== liveId) {
+            return;
+          }
           setState((current) => ({
             ...current,
             ...next,
@@ -55,7 +61,15 @@ export const LivePage = ({ liveId }: { liveId: string }) => {
             image: next.started ? next.image ?? current?.image : null,
           }));
         });
-        connection.on("live-hand-lowered", () => setHand(false));
+        connection.on(
+          "live-hand-lowered",
+          (event: { socketId?: string } | undefined) => {
+            // sent to the whole audience: is it this hand?
+            if (event?.socketId === connection.id) {
+              setHand(false);
+            }
+          },
+        );
         const join = async () => {
           const answer = await askServer<{ ok: boolean }>(
             connection,

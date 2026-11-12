@@ -125,19 +125,28 @@ describeWithDb("library catalog", () => {
         await colleague.app("POST", `/api/library-catalog/${entry.id}/add`, {})
       ).json().added,
     ).toBe(2);
+    const before = (
+      await colleague.app("GET", "/api/libraries/personal")
+    ).json();
+    // nothing new: nothing written (no conflict for others), not counted
     expect(
       (
         await colleague.app("POST", `/api/library-catalog/${entry.id}/add`, {})
-      ).json().added,
-    ).toBe(0);
+      ).json(),
+    ).toMatchObject({
+      added: 0,
+      updated: 0,
+      revision: before.library.revision,
+    });
     const own = (await colleague.app("GET", "/api/libraries/personal")).json();
     expect(
       own.libraryItems.map((libraryItem: { id: string }) => libraryItem.id),
     ).toEqual(["router", "switch"]);
+    expect(own.library.revision).toBe(before.library.revision);
     expect(
       (await author.app("GET", "/api/library-catalog")).json().entries[0]
         .downloads,
-    ).toBe(3);
+    ).toBe(2);
 
     // only the author and app admins change or remove it
     expect(
@@ -160,6 +169,23 @@ describeWithDb("library catalog", () => {
       name: "Netzwerk-Symbole",
       items: 1,
     });
+    // the author's update reaches who adds it again
+    await author.app("PATCH", `/api/library-catalog/${entry.id}`, {
+      libraryItems: [item("router", "diamond")],
+    });
+    expect(
+      (
+        await colleague.app("POST", `/api/library-catalog/${entry.id}/add`, {})
+      ).json(),
+    ).toMatchObject({ added: 0, updated: 1 });
+    const refreshed = (
+      await colleague.app("GET", "/api/libraries/personal")
+    ).json();
+    expect(
+      refreshed.libraryItems.find(
+        (libraryItem: { id: string }) => libraryItem.id === "router",
+      ).elements[0].type,
+    ).toBe("diamond");
     expect(
       (await admin.app("DELETE", `/api/library-catalog/${entry.id}`))
         .statusCode,
@@ -226,6 +252,7 @@ describeWithDb("library catalog", () => {
       "library_catalog.published",
       "library_catalog.published",
       "library_catalog.removed",
+      "library_catalog.updated",
       "library_catalog.updated",
     ]);
   });

@@ -61,5 +61,12 @@ describe("intranet embeds (E2)", () => {
       external: true,
     }) as (link: string) => boolean | undefined;
     expect(withExternal("https://www.youtube.com/watch?v=abc")).toBeUndefined();
+    // shown through the provider's scripts, which the CSP blocks
+    expect(withExternal("https://x.com/someone/status/123")).toBe(false);
+    expect(withExternal("https://twitter.com/someone/status/123")).toBe(false);
+    expect(withExternal("https://www.reddit.com/r/a/comments/b/c/")).toBe(
+      false,
+    );
+    expect(withExternal("https://gist.github.com/someone/abc")).toBe(false);
   });
 });

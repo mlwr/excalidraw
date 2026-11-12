@@ -357,7 +357,7 @@ import {
   SnapCache,
   isGridModeEnabled,
 } from "../snapping";
-import { Renderer } from "../scene/Renderer";
+import { isLocallyHidden, Renderer } from "../scene/Renderer";
 import {
   type SetViewportOptions,
   getViewportForZoomWithScrollConstraints,
@@ -1805,14 +1805,14 @@ class App extends React.Component<AppProps, AppState> {
     const normalizedWidth = this.state.width;
     const normalizedHeight = this.state.height;
 
-    const embeddableElements = this.scene
-      .getNonDeletedElements()
-      .filter(
-        (el): el is Ordered<NonDeleted<ExcalidrawIframeLikeElement>> =>
-          (isEmbeddableElement(el) &&
-            this.embedsValidationStatus.get(el.id) === true) ||
-          isIframeElement(el),
-      );
+    const embeddableElements = this.scene.getNonDeletedElements().filter(
+      (el): el is Ordered<NonDeleted<ExcalidrawIframeLikeElement>> =>
+        ((isEmbeddableElement(el) &&
+          this.embedsValidationStatus.get(el.id) === true) ||
+          isIframeElement(el)) &&
+        // intranet fork (P5): not yet revealed on this screen
+        !isLocallyHidden(el.id),
+    );
 
     return (
       <>
@@ -6066,7 +6066,8 @@ class App extends React.Component<AppProps, AppState> {
                   !(isTextElement(element) && element.containerId)),
             )
     )
-      .filter((el) => this.hitElement(x, y, el))
+      // intranet fork (P5): what this screen does not show cannot be hit
+      .filter((el) => !isLocallyHidden(el.id) && this.hitElement(x, y, el))
       .filter((element) => !this.isClippedByFrameAt(x, y, element))
       .filter((el) => {
         // The parameter elements comes ordered from lower z-index to higher.

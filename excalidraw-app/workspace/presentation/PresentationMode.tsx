@@ -24,7 +24,6 @@ import type {
 import { atom, useAtom, useAtomValue } from "../../app-jotai";
 import { collabAPIAtom, isCollaboratingAtom } from "../../collab/Collab";
 import { spotlightAtom } from "../../collab/spotlight";
-import { getCurrentUser } from "../../intranet/session";
 
 import {
   askServer,
@@ -97,7 +96,8 @@ export const PresentationMode = ({
   // P4
   const [remote, setRemote] = useState<{
     key: string;
-    phone: string | null;
+    /** a phone (same login) is connected */
+    connected: boolean;
   } | null>(null);
   const [showQr, setShowQr] = useState(false);
   // P6
@@ -111,6 +111,9 @@ export const PresentationMode = ({
   const [reactions, setReactions] = useState<Reaction[]>([]);
   const [liveOpen, setLiveOpen] = useState(false);
   const socket = useRef<Socket | null>(null);
+  // for joining again after a lost connection
+  const remoteKey = useRef<string | null>(null);
+  const liveHostKey = useRef<string | null>(null);
   const channel = useRef<BroadcastChannel | null>(null);
   const saved = useRef<SavedState | null>(null);
   const startedSpotlight = useRef(false);
@@ -352,6 +355,36 @@ export const PresentationMode = ({
   };
 
   // P4 and P6: the realtime connection
+  /** P6: the current slide for the audience, or for one newcomer */
+  const sendLiveState = useRef<(to?: string) => void>(() => {});
+  sendLiveState.current = (to) => {
+    if (!live || !socket.current || !state || !slide) {
+      return;
+    }
+    const version = getSceneVersion(excalidrawAPI.getSceneElements());
+    const hostKey = live.hostKey;
+    const started = live.started;
+    (started
+      ? slideImage(excalidrawAPI, slide, state.step, version).catch(() => null)
+      : Promise.resolve(null)
+    ).then((image) => {
+      // (the server adds who presents)
+      const message = {
+        started,
+        ended: false,
+        index: state.index,
+        count: state.count,
+        title: state.title,
+        image,
+      };
+      if (to) {
+        socket.current?.emit("live-state", hostKey, message, to);
+      } else {
+        socket.current?.emit("live-state", hostKey, message);
+      }
+    });
+  };
+
   const sendState = useRef<() => void>(() => {});
   sendState.current = () => {
     sendWindowState();
@@ -364,50 +397,51 @@ export const PresentationMode = ({
         state,
       });
     }
-    if (live && socket.current && slide) {
-      const version = getSceneVersion(excalidrawAPI.getSceneElements());
-      const hostKey = live.hostKey;
-      slideImage(excalidrawAPI, slide, state.step, version)
-        .catch(() => null)
-        .then((image) =>
-          socket.current?.emit("live-state", hostKey, {
-            started: live.started,
-            ended: false,
-            index: state.index,
-            count: state.count,
-            title: state.title,
-            presenter: getCurrentUser()?.name || "",
-            image: live.started ? image : null,
-          }),
-        );
-    }
+    sendLiveState.current();
   };
 
   useEffect(() => {
     sendState.current();
   }, [state, live?.started, remote]);
 
+  /** after a lost connection the server knows nothing of us: join again */
+  const rejoin = useRef(() => {});
+  rejoin.current = () => {
+    const connection = socket.current;
+    if (!connection) {
+      return;
+    }
+    if (remoteKey.current) {
+      connection.emit("remote-join", remoteKey.current);
+    }
+    if (liveHostKey.current) {
+      connection.emit("live-host", liveHostKey.current);
+    }
+    sendState.current();
+  };
+
   const connect = async () => {
     if (!socket.current) {
       const opened = await openPresentingSocket();
-      opened.on(
-        "remote-message",
-        (message: { type?: string; name?: string }) => {
-          if (message?.type === "joined") {
-            setRemote((current) =>
-              current ? { ...current, phone: message.name || "" } : current,
-            );
-            setShowQr(false);
-            sendState.current();
-          } else if (
-            message?.type === "next" ||
-            message?.type === "prev" ||
-            message?.type === "hello"
-          ) {
-            commands.current(message as PresentingCommand);
-          }
-        },
-      );
+      // the server's own notice: the phone (same login) is there
+      opened.on("remote-peer", (notice: { type?: string }) => {
+        if (notice?.type === "joined") {
+          setRemote((current) =>
+            current ? { ...current, connected: true } : current,
+          );
+          setShowQr(false);
+          sendState.current();
+        }
+      });
+      opened.on("remote-message", (message: { type?: string }) => {
+        if (
+          message?.type === "next" ||
+          message?.type === "prev" ||
+          message?.type === "hello"
+        ) {
+          commands.current(message as PresentingCommand);
+        }
+      });
       opened.on(
         "live-audience",
         (event: {
@@ -417,8 +451,9 @@ export const PresentationMode = ({
           emoji?: string;
           raised?: boolean;
         }) => {
-          if (event.type === "joined") {
-            sendState.current();
+          if (event.type === "joined" && event.socketId) {
+            // the newcomer alone, not everyone again
+            sendLiveState.current(event.socketId);
           } else if (event.type === "reaction" && event.emoji) {
             const id = ++reactionId.current;
             setReactions((current) => [
@@ -450,6 +485,7 @@ export const PresentationMode = ({
           }
         },
       );
+      opened.on("connect", () => rejoin.current());
       socket.current = opened;
     }
     return socket.current;
@@ -471,7 +507,8 @@ export const PresentationMode = ({
       if (!answer.ok) {
         throw new Error("Die Fernbedienung ließ sich nicht einrichten.");
       }
-      setRemote({ key, phone: null });
+      remoteKey.current = key;
+      setRemote({ key, connected: false });
       setShowQr(true);
     } catch (error: any) {
       excalidrawAPI.setToast({ message: error.message, closable: true });
@@ -494,6 +531,7 @@ export const PresentationMode = ({
       if (!answer.ok || !answer.id) {
         throw new Error("Die Live-Präsentation ließ sich nicht starten.");
       }
+      liveHostKey.current = hostKey;
       setLive({ hostKey, id: answer.id, started: false });
     } catch (error: any) {
       excalidrawAPI.setToast({ message: error.message, closable: true });
@@ -524,11 +562,15 @@ export const PresentationMode = ({
       socket.current.emit("live-state", live.hostKey, { ended: true });
     }
     if (socket.current) {
+      socket.current.off("remote-peer");
       socket.current.off("remote-message");
       socket.current.off("live-audience");
+      socket.current.off("connect");
       socket.current = null;
       closePresentingSocket();
     }
+    remoteKey.current = null;
+    liveHostKey.current = null;
     if (channel.current) {
       channel.current.postMessage({ type: "ended" });
       channel.current.close();
@@ -747,11 +789,14 @@ export const PresentationMode = ({
         </button>
         <button
           type="button"
-          className={clsx("ws-present__button", remote?.phone && "is-active")}
+          className={clsx(
+            "ws-present__button",
+            remote?.connected && "is-active",
+          )}
           title="Mit dem Smartphone weiterschalten"
           onClick={startRemote}
         >
-          {remote?.phone ? "Fernbedienung an" : "Fernbedienung"}
+          {remote?.connected ? "Fernbedienung an" : "Fernbedienung"}
         </button>
         <button
           type="button"
@@ -802,7 +847,8 @@ export const PresentationMode = ({
           />
           <p className="ws-muted">
             Code mit der Kamera scannen. Das Smartphone muss im Firmennetz oder
-            im VPN sein; angemeldet wird wie am Rechner.
+            im VPN sein und mit demselben Konto angemeldet wie dieser Rechner;
+            andere Konten erreichen die Präsentation nicht.
           </p>
           <input
             className="ws-input"

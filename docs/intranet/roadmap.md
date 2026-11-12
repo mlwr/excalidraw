@@ -105,12 +105,23 @@ Bekannte Grenzen:
 - **P5** Einblendungen: ausgewählte Elemente einer Folie erscheinen Klick für Klick (nur auf dem Bildschirm der vortragenden Person ausgeblendet; die Szene bleibt, wie sie ist).
 - **P6** Live-Präsentation: Link für das Publikum, Warteraum bis zum Start, Folien im eigenen Browser, Emoji-Reaktionen und Handzeichen mit Namen bei der vortragenden Person.
 
+Nach dem Review der Phase:
+
+- Der Server rendert Bilder und Bibliotheksvorschauen in einem eigenen Prozess mit Speicher- und Zeitgrenze; zu aufwendige Szenen beenden diesen Prozess, nicht den Server. Elemente und eingebettete Bilder haben Größengrenzen ([Betrieb](./betrieb.md#kommandozeile-und-bilder)).
+- Unterordner geben niemandem mehr Rechte als der Ordner darüber; Änderungen am Ordnerbaum laufen nacheinander (keine Schleifen, keine Unterordner in gelöschten Ordnern).
+- Die Ratenbegrenzung richtet sich nach der aufgerufenen Route, nicht nach der Schreibweise der Adresse.
+- Die Fernbedienung erreicht nur dasselbe Konto; Präsentations-Nachrichten sind begrenzt, den Namen der vortragenden Person setzt der Server, Neuzugänge bekommen die Folie allein, nach Verbindungsabbrüchen verbindet sich alles neu.
+- Einblendungen verbergen auch eingebettete Webseiten, und verborgene Elemente lassen sich nicht anklicken.
+- `/` kommt nie mehr aus dem Cache des Service Workers (dort liegt nur eine Kopie für den Betrieb ohne Verbindung).
+- Firmenschriften werden beim Entfernen gelöscht; mehrere Instanzen gleichen sich nach spätestens zehn Sekunden ab. Der Katalog übernimmt Änderungen an Einträgen und schreibt nichts, wenn nichts neu ist.
+
 Bekannte Grenzen:
 
 - Das Publikum einer Live-Präsentation sieht Bilder der Folien (keine Live-Zeichenfläche); Laserpointer und Änderungen während des Vortrags erscheinen erst mit der nächsten Folie oder Einblendung.
 - Einblendungen gelten beim Präsentieren, nicht im PDF- und PowerPoint-Export (dort erscheint jede Folie vollständig).
-- Die Fernbedienung braucht ein Smartphone mit Zugang zur App (Firmennetz oder VPN).
+- Die Fernbedienung braucht ein Smartphone mit Zugang zur App (Firmennetz oder VPN), angemeldet mit demselben Konto.
 - Eine entfernte Firmenschrift fehlt danach auch in älteren Zeichnungen (Ersatzschrift).
+- In PNGs der API fehlen eingebettete Bilder über 16 Megapixel; sehr aufwendige Szenen (mehr als 20 Sekunden) gibt es nur als Ausschnitt (Frame).
 
 ## Priorisierung
 

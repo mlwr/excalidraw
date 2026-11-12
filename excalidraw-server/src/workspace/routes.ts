@@ -8,7 +8,7 @@ import {
   randomToken,
   sealSceneKey,
 } from "../util/crypto.js";
-import { sendError } from "../util/http.js";
+import { HttpError, sendError } from "../util/http.js";
 import {
   containsPattern,
   hasControlChars,
@@ -43,6 +43,7 @@ import {
 import type { AppContext } from "../context.js";
 import type {
   Collection,
+  Database,
   GrantRole,
   PrincipalType,
   Workspace,
@@ -55,6 +56,7 @@ import type {
   FastifyRequest,
   preHandlerHookHandler,
 } from "fastify";
+import type { Transaction } from "kysely";
 
 const SCENE_ID_RE = /^[a-zA-Z0-9_-]{8,64}$/;
 const FILE_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
@@ -64,6 +66,27 @@ const MAX_NAME_LENGTH = 200;
 const MAX_THUMBNAIL_BYTES = 1024 * 1024;
 const THUMBNAIL_TYPES = new Set(["image/png", "image/webp", "image/jpeg"]);
 const PRESENCE_CACHE_MS = 3000;
+
+// first of the two advisory lock keys: "excalidraw collection tree"
+const TREE_LOCK_NAMESPACE = 72_209;
+
+/**
+ * W4: changes to a workspace's collection tree (new subfolders, moves,
+ * deletions) one after the other, each checking again under the lock: two
+ * moves at once could otherwise make a loop, a subfolder could land in a
+ * folder deleted at the same moment.
+ */
+const lockTree = (trx: Transaction<Database>, workspaceId: string) =>
+  sql`select pg_advisory_xact_lock(${TREE_LOCK_NAMESPACE}::int, hashtext(${workspaceId}::text))`.execute(
+    trx,
+  );
+
+const tooDeep = () =>
+  new HttpError(
+    400,
+    "too_deep",
+    `Ordner lassen sich höchstens ${MAX_COLLECTION_DEPTH} Ebenen tief verschachteln.`,
+  );
 
 interface GrantInput {
   type: PrincipalType;
@@ -533,13 +556,18 @@ export const registerWorkspaceRoutes = (
         );
       }
       const userId = request.auth!.user.id;
-      const parentId = (request.body as Record<string, unknown>)?.parentId;
+      const rawParentId = (request.body as Record<string, unknown>)?.parentId;
+      let parentId: string | null = null;
       let workspaceId: string;
-      if (parentId !== undefined && parentId !== null) {
-        // W4: a collection inside another one, by those who may edit there
+      /** the creator's role in the new collection */
+      let role: Role = "manager";
+      if (rawParentId !== undefined && rawParentId !== null) {
+        // W4: a collection inside another one, by members of the workspace
+        // who may edit there. They get no grant of their own: the folder
+        // inherits who may do what, so nobody gains rights by creating one.
         const parent = await loadCollection(
           actor(request),
-          String(parentId),
+          String(rawParentId),
           reply,
           "editor",
         );
@@ -554,18 +582,10 @@ export const registerWorkspaceRoutes = (
             "„Meine Szenen“ hat keine Unterordner.",
           );
         }
-        if (
-          (await collectionChain(db, parent.collection.id)).length >=
-          MAX_COLLECTION_DEPTH
-        ) {
-          return sendError(
-            reply,
-            400,
-            "too_deep",
-            `Ordner lassen sich höchstens ${MAX_COLLECTION_DEPTH} Ebenen tief verschachteln.`,
-          );
-        }
+        await workspaceOf(request, "member", parent.collection.workspace_id);
+        parentId = parent.collection.id;
         workspaceId = parent.collection.workspace_id;
+        role = parent.role;
       } else {
         const { workspace, access } = await workspaceOf(
           request,
@@ -586,27 +606,52 @@ export const registerWorkspaceRoutes = (
         workspaceId = workspace.id;
       }
       const collection = await db.transaction().execute(async (trx) => {
+        if (parentId) {
+          await lockTree(trx, workspaceId);
+          // the folder above may have gone meanwhile
+          const parent = await trx
+            .selectFrom("collections")
+            .select("id")
+            .where("id", "=", parentId)
+            .where("deleted_at", "is", null)
+            .executeTakeFirst();
+          if (!parent) {
+            throw new HttpError(
+              404,
+              "not_found",
+              "Den Ordner darüber gibt es nicht mehr.",
+            );
+          }
+          if (
+            (await collectionChain(trx, parentId)).length >=
+            MAX_COLLECTION_DEPTH
+          ) {
+            throw tooDeep();
+          }
+        }
         const created = await trx
           .insertInto("collections")
           .values({
             workspace_id: workspaceId,
             name,
             kind: "team",
-            parent_id: parentId ? String(parentId) : null,
+            parent_id: parentId,
             created_by: userId,
           })
           .returningAll()
           .executeTakeFirstOrThrow();
-        await trx
-          .insertInto("collection_grants")
-          .values({
-            collection_id: created.id,
-            principal_type: "user",
-            principal: userId,
-            role: "manager",
-            created_by: userId,
-          })
-          .execute();
+        if (!parentId) {
+          await trx
+            .insertInto("collection_grants")
+            .values({
+              collection_id: created.id,
+              principal_type: "user",
+              principal: userId,
+              role: "manager",
+              created_by: userId,
+            })
+            .execute();
+        }
         return created;
       });
       ctx.events.record({
@@ -625,7 +670,7 @@ export const registerWorkspaceRoutes = (
         name: collection.name,
         kind: collection.kind,
         parentId: collection.parent_id,
-        role: "manager",
+        role,
         sceneCount: 0,
       });
     },
@@ -662,6 +707,7 @@ export const registerWorkspaceRoutes = (
       }
       // W4: move into another collection (parentId) or to the top (null)
       let parentId = loaded.collection.parent_id;
+      let target: Collection | null = null;
       if (input.parentId !== undefined && input.parentId !== parentId) {
         if (input.parentId === null) {
           const { workspace, access } = await workspaceOf(
@@ -682,20 +728,19 @@ export const registerWorkspaceRoutes = (
           }
           parentId = null;
         } else {
-          const target = await loadCollection(
+          const loadedTarget = await loadCollection(
             actor(request),
             String(input.parentId),
             reply,
             "editor",
           );
-          if (!target) {
+          if (!loadedTarget) {
             return;
           }
-          const chain = await collectionChain(db, target.collection.id);
+          target = loadedTarget.collection;
           if (
-            target.collection.kind !== "team" ||
-            target.collection.workspace_id !== loaded.collection.workspace_id ||
-            chain.some((row) => row.id === loaded.collection.id)
+            target.kind !== "team" ||
+            target.workspace_id !== loaded.collection.workspace_id
           ) {
             return sendError(
               reply,
@@ -704,27 +749,90 @@ export const registerWorkspaceRoutes = (
               "Dorthin lässt sich der Ordner nicht verschieben.",
             );
           }
-          const height = Math.max(
-            ...(await collectionSubtree(db, loaded.collection.id)).map((row) =>
-              Number(row.depth),
-            ),
-          );
-          if (chain.length + 1 + height > MAX_COLLECTION_DEPTH) {
-            return sendError(
-              reply,
-              400,
-              "too_deep",
-              `Ordner lassen sich höchstens ${MAX_COLLECTION_DEPTH} Ebenen tief verschachteln.`,
-            );
-          }
-          parentId = target.collection.id;
+          parentId = target.id;
         }
       }
-      await db
-        .updateTable("collections")
-        .set({ name, parent_id: parentId, updated_at: sql`now()` })
-        .where("id", "=", loaded.collection.id)
-        .execute();
+      const moved = parentId !== loaded.collection.parent_id;
+      await db.transaction().execute(async (trx) => {
+        if (moved) {
+          await lockTree(trx, loaded.collection.workspace_id);
+          // checked again under the lock: another move may have come first
+          const current = await trx
+            .selectFrom("collections")
+            .select(["parent_id"])
+            .where("id", "=", loaded.collection.id)
+            .where("deleted_at", "is", null)
+            .executeTakeFirst();
+          if (!current) {
+            throw new HttpError(404, "not_found");
+          }
+          if (target) {
+            const chain = await collectionChain(trx, target.id);
+            const targetNow = await trx
+              .selectFrom("collections")
+              .select("id")
+              .where("id", "=", target.id)
+              .where("deleted_at", "is", null)
+              .executeTakeFirst();
+            if (
+              !targetNow ||
+              chain.some((row) => row.id === loaded.collection.id)
+            ) {
+              throw new HttpError(
+                400,
+                "invalid_parent",
+                "Dorthin lässt sich der Ordner nicht verschieben.",
+              );
+            }
+            const height = Math.max(
+              ...(await collectionSubtree(trx, loaded.collection.id)).map(
+                (row) => Number(row.depth),
+              ),
+            );
+            if (chain.length + 1 + height > MAX_COLLECTION_DEPTH) {
+              throw tooDeep();
+            }
+          } else {
+            // at the top nothing is inherited any more: someone must manage
+            // it, so whoever moves it keeps managing it
+            const own = await trx
+              .selectFrom("collection_grants")
+              .select(["principal_type", "principal", "role"])
+              .where("collection_id", "=", loaded.collection.id)
+              .execute();
+            const managed = await hasActiveManager(
+              own.map((grant) => ({
+                type: grant.principal_type as PrincipalType,
+                principal: grant.principal,
+                role: grant.role as GrantRole,
+              })),
+            );
+            if (!managed) {
+              await trx
+                .deleteFrom("collection_grants")
+                .where("collection_id", "=", loaded.collection.id)
+                .where("principal_type", "=", "user")
+                .where("principal", "=", request.auth!.user.id)
+                .execute();
+              await trx
+                .insertInto("collection_grants")
+                .values({
+                  collection_id: loaded.collection.id,
+                  principal_type: "user",
+                  principal: request.auth!.user.id,
+                  role: "manager",
+                  created_by: request.auth!.user.id,
+                })
+                .execute();
+            }
+          }
+        }
+        await trx
+          .updateTable("collections")
+          .set({ name, parent_id: parentId, updated_at: sql`now()` })
+          .where("id", "=", loaded.collection.id)
+          .execute();
+      });
       if (name !== loaded.collection.name) {
         ctx.events.record({
           type: "collection.renamed",
@@ -735,7 +843,7 @@ export const registerWorkspaceRoutes = (
           data: { name, before: loaded.collection.name },
         });
       }
-      if (parentId !== loaded.collection.parent_id) {
+      if (moved) {
         ctx.events.record({
           type: "collection.moved",
           actor: request.auth!.user,
@@ -776,39 +884,41 @@ export const registerWorkspaceRoutes = (
       if (loaded.collection.kind === "personal") {
         return sendError(reply, 400, "personal_collection");
       }
-      const remaining = await db
-        .selectFrom("scenes")
-        .select(sql<number>`count(*)::int`.as("count"))
-        .where("collection_id", "=", loaded.collection.id)
-        .where("deleted_at", "is", null)
-        .executeTakeFirstOrThrow();
-      if (remaining.count > 0) {
-        return sendError(
-          reply,
-          409,
-          "collection_not_empty",
-          "Die Collection enthält noch Szenen.",
-        );
-      }
-      const children = await db
-        .selectFrom("collections")
-        .select("id")
-        .where("parent_id", "=", loaded.collection.id)
-        .where("deleted_at", "is", null)
-        .executeTakeFirst();
-      if (children) {
-        return sendError(
-          reply,
-          409,
-          "collection_not_empty",
-          "Die Collection enthält noch Unterordner.",
-        );
-      }
-      await db
-        .updateTable("collections")
-        .set({ deleted_at: sql`now()` })
-        .where("id", "=", loaded.collection.id)
-        .execute();
+      await db.transaction().execute(async (trx) => {
+        // under the lock: no subfolder may arrive while this one goes
+        await lockTree(trx, loaded.collection.workspace_id);
+        const remaining = await trx
+          .selectFrom("scenes")
+          .select(sql<number>`count(*)::int`.as("count"))
+          .where("collection_id", "=", loaded.collection.id)
+          .where("deleted_at", "is", null)
+          .executeTakeFirstOrThrow();
+        if (remaining.count > 0) {
+          throw new HttpError(
+            409,
+            "collection_not_empty",
+            "Die Collection enthält noch Szenen.",
+          );
+        }
+        const children = await trx
+          .selectFrom("collections")
+          .select("id")
+          .where("parent_id", "=", loaded.collection.id)
+          .where("deleted_at", "is", null)
+          .executeTakeFirst();
+        if (children) {
+          throw new HttpError(
+            409,
+            "collection_not_empty",
+            "Die Collection enthält noch Unterordner.",
+          );
+        }
+        await trx
+          .updateTable("collections")
+          .set({ deleted_at: sql`now()` })
+          .where("id", "=", loaded.collection.id)
+          .execute();
+      });
       ctx.events.record({
         type: "collection.deleted",
         actor: request.auth!.user,

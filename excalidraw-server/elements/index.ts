@@ -29,10 +29,7 @@ import {
   getContainerElement,
   redrawTextBoundingBox,
 } from "@excalidraw/element/textElement";
-import {
-  normalizeText,
-  setCustomTextMetricsProvider,
-} from "@excalidraw/element/textMeasurements";
+import { normalizeText } from "@excalidraw/element/textMeasurements";
 import { convertToExcalidrawElements } from "@excalidraw/element/transform";
 import { isTextElement } from "@excalidraw/element/typeChecks";
 import { restoreElements } from "@excalidraw/excalidraw/data/restore";
@@ -44,77 +41,22 @@ import type {
 } from "@excalidraw/element/types";
 import type { ExcalidrawElementSkeleton } from "@excalidraw/element/transform";
 
-import fontWidths from "./fontWidths.json";
-
 import { layoutDiagram } from "./layout";
+import { measureLine } from "./textMetrics";
 
 import type { DiagramSpec } from "./layout";
 
 export type { DiagramEdge, DiagramNode, DiagramSpec } from "./layout";
 
-export {
-  configureRenderFonts,
-  MAX_PNG_PIXELS,
-  registerRenderFont,
-  RenderError,
-  renderLibraryPreview,
-  renderScene,
-  unregisterRenderFont,
-} from "./render";
+// rendering (I3) runs in a thread of its own: see renderWorker.ts
 export { FontFileError, prepareCompanyFont } from "./fonts";
 export type { FontMetrics } from "./fonts";
-export type { RenderOptions } from "./render";
+export { geometryProblem, LIBRARY_LIMITS, SCENE_LIMITS } from "./geometry";
+export type { GeometryLimits } from "./geometry";
 
-// --- text measurement (no canvas on the server) -------------------------------
+// --- text measurement (no canvas on the server): see textMetrics.ts ----------
 
-interface WidthTable {
-  fallback: number;
-  widths: Map<number, number>;
-}
-
-const TABLES = new Map<string, WidthTable>(
-  Object.entries(
-    fontWidths as Record<
-      string,
-      { fallback: number; chars: string; widths: number[] }
-    >,
-  ).map(([family, table]) => [
-    family,
-    {
-      fallback: table.fallback,
-      widths: new Map(
-        [...table.chars].map((char, i) => [
-          char.codePointAt(0)!,
-          table.widths[i],
-        ]),
-      ),
-    },
-  ]),
-);
-
-const FONT_STRING_RE = /^(\d+(?:\.\d+)?)px\s+(.*)$/;
-
-/** width of one line of text in px, from the shipped fonts' advance widths */
-export const measureLine = (text: string, fontString: string) => {
-  const match = FONT_STRING_RE.exec(fontString);
-  const size = match ? Number(match[1]) : 20;
-  const family = (match ? match[2] : "")
-    .split(",")[0]
-    .trim()
-    .replace(/^["']|["']$/g, "");
-  const table = TABLES.get(family) || TABLES.get("Excalifont")!;
-  let em = 0;
-  for (const char of text) {
-    const code = char.codePointAt(0)!;
-    em +=
-      table.widths.get(code) ??
-      // emoji, then CJK and other full-width scripts
-      (code >= 0x1f000 ? 1.2 : code >= 0x2e80 ? 1 : table.fallback);
-  }
-  return em * size;
-};
-
-setCustomTextMetricsProvider({ getLineWidth: measureLine });
+export { measureLine };
 
 /** skeletons of a laid out diagram (nodes and edges) */
 export const diagramSkeletons = (spec: DiagramSpec) =>

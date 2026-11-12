@@ -67,7 +67,7 @@ const catalogApi = {
   remove: async (id: string) =>
     json<void>(await send("DELETE", `/api/library-catalog/${id}`)),
   add: async (id: string, libraryId: string) =>
-    json<{ added: number }>(
+    json<{ added: number; updated?: number }>(
       await send("POST", `/api/library-catalog/${id}/add`, { libraryId }),
     ),
 };
@@ -295,14 +295,19 @@ export const LibraryCatalog = () => {
       return;
     }
     try {
-      const { added } = await catalogApi.add(entry.id, target);
+      const { added, updated = 0 } = await catalogApi.add(entry.id, target);
+      const count = (n: number) => `${n} ${n === 1 ? "Eintrag" : "Einträge"}`;
       setMessage({
         kind: "info",
-        text: added
-          ? `${added} ${added === 1 ? "Eintrag" : "Einträge"} aus „${
-              entry.name
-            }“ hinzugefügt.`
-          : `Alles aus „${entry.name}“ ist schon in der Bibliothek.`,
+        text:
+          added || updated
+            ? `Aus „${entry.name}“: ${[
+                added ? `${count(added)} hinzugefügt` : "",
+                updated ? `${count(updated)} aktualisiert` : "",
+              ]
+                .filter(Boolean)
+                .join(", ")}.`
+            : `Alles aus „${entry.name}“ ist schon in der Bibliothek.`,
       });
       load(query.trim());
     } catch (err: any) {

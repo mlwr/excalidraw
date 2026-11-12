@@ -1,6 +1,8 @@
-// Bundles elements/index.ts -- the editor's element logic for the server --
-// with the editor packages into vendor/elements.mjs. Runs before the server
-// is started, tested or built (see package.json).
+// Bundles the editor's element logic for the server, with the editor
+// packages: elements/index.ts into vendor/elements.mjs (imported by the
+// server), elements/renderWorker.ts into vendor/render-worker.mjs (the
+// renderer's own thread, I3). Runs before the server is started, tested or
+// built (see package.json).
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,14 +61,19 @@ const fontNames = {
 };
 
 await build({
-  entryPoints: [path.join(here, "../elements/index.ts")],
-  outfile: path.join(here, "../vendor/elements.mjs"),
+  entryPoints: {
+    elements: path.join(here, "../elements/index.ts"),
+    "render-worker": path.join(here, "../elements/renderWorker.ts"),
+  },
+  outdir: path.join(here, "../vendor"),
+  outExtension: { ".js": ".mjs" },
   bundle: true,
   platform: "node",
   target: "node22",
   format: "esm",
   sourcemap: true,
-  legalComments: "none",
+  // collected into the image's third-party notices (scripts/build.mjs)
+  legalComments: "external",
   alias: {
     "@excalidraw/common": path.join(packages, "common/src"),
     "@excalidraw/element": path.join(packages, "element/src"),

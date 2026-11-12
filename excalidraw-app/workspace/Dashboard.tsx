@@ -771,19 +771,20 @@ export const Dashboard = () => {
                       ? "Zugriff verwalten"
                       : "Zugriff anzeigen"}
                   </Button>
-                  {(currentCollection.role === "editor" ||
-                    currentCollection.role === "manager") && (
-                    <Button
-                      onClick={() =>
-                        setModal({
-                          kind: "newCollection",
-                          parentId: currentCollection.id,
-                        })
-                      }
-                    >
-                      Neuer Unterordner
-                    </Button>
-                  )}
+                  {isMember &&
+                    (currentCollection.role === "editor" ||
+                      currentCollection.role === "manager") && (
+                      <Button
+                        onClick={() =>
+                          setModal({
+                            kind: "newCollection",
+                            parentId: currentCollection.id,
+                          })
+                        }
+                      >
+                        Neuer Unterordner
+                      </Button>
+                    )}
                   {currentCollection.role === "manager" && (
                     <>
                       <Button

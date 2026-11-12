@@ -31,3 +31,4 @@ meta*.json
 # intranet fork: generated bundle of the editor's element logic for the server
 excalidraw-server/vendor/*.mjs
 excalidraw-server/vendor/*.mjs.map
+excalidraw-server/vendor/*.LEGAL.txt

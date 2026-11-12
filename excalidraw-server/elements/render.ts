@@ -29,7 +29,13 @@ import type {
   ExcalidrawFrameLikeElement,
   NonDeletedExcalidrawElement,
 } from "@excalidraw/element/types";
+
 import type { BinaryFiles } from "@excalidraw/excalidraw/types";
+
+import { geometryProblem, SCENE_LIMITS } from "./geometry";
+import { imageFitsPng, isEmbeddedImage } from "./images";
+// labels and frame names are measured without a canvas
+import "./textMetrics";
 
 export interface RenderOptions {
   format: "svg" | "png";
@@ -175,6 +181,58 @@ const findFrame = (
         (element as ExcalidrawFrameLikeElement).name?.trim() === frame.trim(),
     )) as ExcalidrawFrameLikeElement | undefined;
 
+// --- well-formed XML ------------------------------------------------------------
+
+// XML 1.0 forbids these even as character references
+// eslint-disable-next-line no-control-regex
+const NOT_IN_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g;
+const escapeText = (value: string) =>
+  value
+    .replace(NOT_IN_XML, "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+const escapeAttribute = (value: string) =>
+  escapeText(value).replace(/"/g, "&quot;");
+
+/**
+ * The DOM as XML. linkedom writes attribute values as HTML does, with "<"
+ * and "&" unescaped (an element's link with "<" made the SVG unreadable);
+ * names keep their case (viewBox, clipPath).
+ */
+export const toXml = (node: any): string => {
+  if (node.nodeType === 3 || node.nodeType === 4) {
+    return escapeText(String(node.data ?? node.textContent ?? ""));
+  }
+  if (node.nodeType !== 1) {
+    // comments and the like
+    return "";
+  }
+  const name = node.localName as string;
+  let out = `<${name}`;
+  for (const attribute of node.attributes as Iterable<{
+    name: string;
+    value: string;
+  }>) {
+    out += ` ${attribute.name}="${escapeAttribute(attribute.value)}"`;
+  }
+  if (!node.childNodes.length) {
+    return `${out}/>`;
+  }
+  out += ">";
+  for (const child of node.childNodes) {
+    out += toXml(child);
+  }
+  return `${out}</${name}>`;
+};
+
+// fonts that could not be read here would point to this server's disk
+const stripLocalFonts = (xml: string) =>
+  xml.replace(
+    /@font-face \{ font-family: [^;]+; src: url\(file:[^)]*\); \}/g,
+    "",
+  );
+
 const renderSvg = async (
   elements: readonly NonDeletedExcalidrawElement[],
   files: BinaryFiles,
@@ -192,7 +250,7 @@ const renderSvg = async (
     );
   }
   const { document } = parseHTML("<!doctype html><html><body></body></html>");
-  const svg = (await exportScene({
+  return (await exportScene({
     type: "svg",
     data: {
       elements,
@@ -214,12 +272,12 @@ const renderSvg = async (
       },
     } as any,
   })) as unknown as SVGSVGElement;
-  // fonts that could not be read here would point to this server's disk
-  return svg.outerHTML.replace(
-    /@font-face \{ font-family: [^;]+; src: url\(file:[^)]*\); \}/g,
-    "",
-  );
 };
+
+const sizeOf = (svg: SVGSVGElement) => ({
+  width: Number(svg.getAttribute("width") || 0),
+  height: Number(svg.getAttribute("height") || 0),
+});
 
 let resvgReady: Promise<void> | null = null;
 
@@ -264,12 +322,15 @@ const embeddedFonts = async (svg: string) => {
   return fonts;
 };
 
-const rasterize = async (svg: string, scale: number) => {
+const rasterize = async (
+  svg: string,
+  { width, height }: { width: number; height: number },
+  scale: number,
+) => {
   resvgReady ??= initWasm(resvgWasm as Uint8Array);
   await resvgReady;
-  const width = Number(/\swidth="([\d.]+)"/.exec(svg)?.[1] || 0);
-  const height = Number(/\sheight="([\d.]+)"/.exec(svg)?.[1] || 0);
   if (
+    !Number.isFinite(width * height) ||
     width * height * scale * scale > MAX_PNG_PIXELS ||
     Math.max(width, height) * scale > MAX_PNG_SIDE
   ) {
@@ -294,7 +355,8 @@ const rasterize = async (svg: string, scale: number) => {
   try {
     const image = resvg.render();
     try {
-      return Buffer.from(image.asPng());
+      // its own memory: travels to the server without a copy
+      return image.asPng();
     } finally {
       image.free();
     }
@@ -303,24 +365,48 @@ const rasterize = async (svg: string, scale: number) => {
   }
 };
 
+/**
+ * What the server draws of a scene: elements of sane size (anything else
+ * would only stall the renderer), and pictures embedded in the scene; for
+ * a PNG only pictures it can unpack (see images.ts).
+ */
+const prepare = (
+  scene: { elements: readonly unknown[]; files: Record<string, unknown> },
+  forPng: boolean,
+) => {
+  const sane = scene.elements.filter(
+    (element) =>
+      !!element &&
+      typeof element === "object" &&
+      !geometryProblem(element as Record<string, unknown>, SCENE_LIMITS),
+  );
+  const elements = restoreElements(sane as ExcalidrawElement[], null).filter(
+    (element) => !element.isDeleted,
+  ) as NonDeletedExcalidrawElement[];
+  const files: Record<string, unknown> = {};
+  for (const [id, file] of Object.entries(scene.files || {})) {
+    const dataURL = (file as { dataURL?: unknown } | null)?.dataURL;
+    if (isEmbeddedImage(dataURL) && (!forPng || imageFitsPng(dataURL))) {
+      files[id] = file;
+    }
+  }
+  return { elements, files: files as unknown as BinaryFiles };
+};
+
 /** a scene (its elements and images) as an SVG text or a PNG */
 export const renderScene = async (
   scene: { elements: readonly unknown[]; files: Record<string, unknown> },
   options: RenderOptions,
-): Promise<{ svg: string } | { png: Buffer }> => {
-  const elements = restoreElements(
-    scene.elements as ExcalidrawElement[],
-    null,
-  ).filter((element) => !element.isDeleted) as NonDeletedExcalidrawElement[];
-  const files = scene.files as unknown as BinaryFiles;
+): Promise<{ svg: string } | { png: Uint8Array }> => {
+  const forPng = options.format === "png";
+  const { elements, files } = prepare(scene, forPng);
   const scale = Math.min(4, Math.max(1, options.scale || 1));
-  if (options.format === "svg") {
-    return {
-      svg: await renderSvg(elements, files, { ...options, scale }, false),
-    };
+  const svg = await renderSvg(elements, files, { ...options, scale }, forPng);
+  const xml = stripLocalFonts(toXml(svg));
+  if (!forPng) {
+    return { svg: xml };
   }
-  const svg = await renderSvg(elements, files, options, true);
-  return { png: await rasterize(svg, scale) };
+  return { png: await rasterize(xml, sizeOf(svg), scale) };
 };
 
 // --- library previews (L3) ------------------------------------------------------
@@ -345,24 +431,30 @@ export const renderLibraryPreview = async (
     if (!Array.isArray(item?.elements) || !item.elements.length) {
       continue;
     }
-    const rendered = await renderScene(
+    const { elements, files } = prepare(
       { elements: item.elements, files: {} },
-      { format: "svg", background: false },
+      false,
     );
-    if (!("svg" in rendered)) {
+    if (!elements.length) {
       continue;
     }
-    const { svg } = rendered;
-    const width = Number(/\swidth="([\d.]+)"/.exec(svg)?.[1] || 0);
-    const height = Number(/\sheight="([\d.]+)"/.exec(svg)?.[1] || 0);
-    if (!width || !height) {
+    const svg = await renderSvg(
+      elements,
+      files,
+      { format: "svg", background: false },
+      false,
+    );
+    const { width, height } = sizeOf(svg);
+    if (!(width > 0 && height > 0)) {
       continue;
     }
     const index = cells.length;
     const x = (index % PREVIEW_COLUMNS) * (PREVIEW_CELL + PREVIEW_GAP);
     const y =
       Math.floor(index / PREVIEW_COLUMNS) * (PREVIEW_CELL + PREVIEW_GAP);
-    const inner = svg.slice(svg.indexOf(">") + 1, svg.lastIndexOf("</svg>"));
+    const inner = stripLocalFonts(
+      [...(svg.childNodes as unknown as Iterable<unknown>)].map(toXml).join(""),
+    );
     cells.push(
       `<svg x="${x}" y="${y}" width="${PREVIEW_CELL}" height="${PREVIEW_CELL}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">${inner}</svg>`,
     );

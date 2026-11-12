@@ -341,11 +341,6 @@ export interface CompanyFontsTable {
   metrics: ColumnType<FontMetrics, string, string>;
   created_by: string | null;
   created_at: Timestamp;
-  deleted_at: ColumnType<
-    Date | null,
-    Date | string | null | undefined,
-    Date | string | null
-  >;
 }
 
 /** the font metrics the editor positions text with */

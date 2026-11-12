@@ -343,7 +343,9 @@ export const attachRealtime = (
         if (
           roomId === socket.id ||
           roomId.startsWith("session:") ||
-          roomId.startsWith("user:")
+          roomId.startsWith("user:") ||
+          // presenting rooms say goodbye themselves (presenting.ts)
+          PRESENTING_ROOM_PREFIXES.some((prefix) => roomId.startsWith(prefix))
         ) {
           continue;
         }

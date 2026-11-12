@@ -6,8 +6,6 @@ import fastifyRateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
 import { sql } from "kysely";
 
-import { configureRenderFonts } from "../vendor/elements.mjs";
-
 import { OidcClient } from "./auth/oidc.js";
 import { registerAuth } from "./auth/routes.js";
 import { SessionStore } from "./auth/sessions.js";
@@ -38,6 +36,7 @@ import { registerAiRoutes } from "./ai/routes.js";
 import { createAi } from "./ai/service.js";
 import { createEditorSettings } from "./editor/settings.js";
 import { createCompanyFonts, registerFontRoutes } from "./editor/fonts.js";
+import { createRenderer } from "./render/renderer.js";
 import { registerNotificationRoutes } from "./notifications/routes.js";
 import { createNotifications } from "./notifications/service.js";
 import { registerMcp } from "./mcp/server.js";
@@ -137,18 +136,18 @@ export const buildApp = async (
   ctx.ai = createAi(ctx);
   ctx.editor = createEditorSettings(ctx);
   ctx.fonts = createCompanyFonts(ctx);
-  // the server's own renderer (API images, library previews): the app's
-  // fonts and the company's (E3)
-  configureRenderFonts(
-    config.staticDir
+  // the server's own renderer (API images, library previews) in a thread
+  // of its own, with the app's fonts and the company's (E3)
+  ctx.render = createRenderer({
+    fontDirectory: config.staticDir
       ? path.join(path.resolve(config.staticDir), "fonts")
       : null,
-  );
-  void ctx.fonts
-    .loadIntoRenderer()
-    .catch((error) =>
-      app.log.warn({ err: error }, "company fonts not loaded for rendering"),
-    );
+    fonts: () => ctx.fonts.forRenderer(),
+    log: app.log,
+  });
+  app.addHook("onClose", async () => {
+    await ctx.render.close();
+  });
   ctx.notifications = createNotifications(ctx);
   ctx.search = createSearch(ctx);
 
@@ -157,10 +156,11 @@ export const buildApp = async (
     global: true,
     max: 1200,
     timeWindow: "1 minute",
-    // the app's own files (dozens of chunks per page load) are no API
-    // calls; counting them would lock out busy users, not attackers
-    allowList: (request) =>
-      !request.url.startsWith("/api/") && !request.url.startsWith("/mcp"),
+    // the app's own files (dozens of chunks per page load, all served by
+    // the static files' catch-all route) are no API calls; counting them
+    // would lock out busy users, not attackers. Decided by the route that
+    // matched, not by the address: "/%61pi/..." is the API, too.
+    allowList: (request) => request.routeOptions.url === "/*",
   });
 
   app.addContentTypeParser(
@@ -176,7 +176,10 @@ export const buildApp = async (
   );
 
   app.addHook("onSend", async (request, reply, payload) => {
-    if (request.url.startsWith("/api/")) {
+    if (
+      request.routeOptions.url?.startsWith("/api/") ||
+      request.url.startsWith("/api/")
+    ) {
       for (const [name, value] of Object.entries(API_SECURITY_HEADERS)) {
         if (!reply.hasHeader(name)) {
           reply.header(name, value);
