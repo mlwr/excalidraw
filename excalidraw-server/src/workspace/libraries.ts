@@ -17,8 +17,14 @@ import {
   openSceneKey,
   sealSceneKey,
 } from "../util/crypto.js";
+import { renderLibraryPreview } from "../../vendor/elements.mjs";
 import { HttpError } from "../util/http.js";
-import { hasControlChars } from "../util/validate.js";
+import {
+  containsPattern,
+  hasControlChars,
+  queryParam,
+  searchText,
+} from "../util/validate.js";
 
 import {
   accessibleCollections,
@@ -533,6 +539,377 @@ export const registerLibraryRoutes = (
       await db.deleteFrom("libraries").where("id", "=", library.id).execute();
       record(request, library, "deleted");
       return reply.code(204).send();
+    },
+  );
+
+  // --- the company's catalog (L3) --------------------------------------------
+  // Everyone signed in browses it, publishes libraries into it (from a file
+  // or one of their libraries) and adds them to their own or a team
+  // library. Who published an entry, and app admins, change or remove it.
+
+  type CatalogRow = Selectable<Database["library_catalog"]>;
+
+  const MAX_DESCRIPTION = 1000;
+
+  const cleanDescription = (value: unknown) => {
+    if (value === undefined || value === null) {
+      return "";
+    }
+    if (
+      typeof value !== "string" ||
+      value.length > MAX_DESCRIPTION ||
+      hasControlChars(value.replace(/[\n\r\t]/g, " "))
+    ) {
+      throw new HttpError(
+        400,
+        "invalid_description",
+        `Beschreibung: höchstens ${MAX_DESCRIPTION} Zeichen.`,
+      );
+    }
+    return value.trim();
+  };
+
+  const catalogEntry = async (id: string) => {
+    const row = UUID_RE.test(id)
+      ? await db
+          .selectFrom("library_catalog")
+          .selectAll()
+          .where("id", "=", id)
+          .executeTakeFirst()
+      : undefined;
+    if (!row) {
+      throw new HttpError(404, "not_found", "Nicht im Katalog.");
+    }
+    return row;
+  };
+
+  const mayChange = (request: FastifyRequest, row: CatalogRow) =>
+    request.auth!.user.is_admin || row.created_by === request.auth!.user.id;
+
+  const describeEntry = async (request: FastifyRequest, row: CatalogRow) => {
+    const author = row.created_by
+      ? await db
+          .selectFrom("users")
+          .select(["id", "name"])
+          .where("id", "=", row.created_by)
+          .executeTakeFirst()
+      : undefined;
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      items: row.items,
+      downloads: row.downloads,
+      author: author
+        ? { id: author.id, name: author.name }
+        : { id: null, name: "Gelöschte Person" },
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      preview: row.preview
+        ? `/api/library-catalog/${row.id}/preview?v=${new Date(
+            row.updated_at,
+          ).getTime()}`
+        : null,
+      canEdit: mayChange(request, row),
+    };
+  };
+
+  const catalogItems = (row: CatalogRow) => {
+    const key = openSceneKey(config.dataEncryptionKey, row.key_sealed);
+    return JSON.parse(decryptWithSceneKey(key, row.content).toString("utf8"));
+  };
+
+  /** items and their preview, encrypted with the entry's key */
+  const sealCatalog = async (
+    sealedKey: Buffer,
+    items: unknown[],
+    json: string,
+  ) => {
+    const key = openSceneKey(config.dataEncryptionKey, sealedKey);
+    let preview: Buffer | null = null;
+    try {
+      preview = encryptWithSceneKey(
+        key,
+        Buffer.from(
+          await renderLibraryPreview(items as { elements?: unknown[] }[]),
+          "utf8",
+        ),
+      );
+    } catch (error) {
+      // a library the renderer cannot draw is still a library
+      ctx.log.warn({ err: error }, "library preview not rendered");
+    }
+    const content = encryptWithSceneKey(key, Buffer.from(json, "utf8"));
+    return { content, preview, size: content.length, items: items.length };
+  };
+
+  /** the items to publish: sent along, or from one of my libraries */
+  const itemsToPublish = async (
+    request: FastifyRequest,
+    input: Record<string, unknown>,
+  ) => {
+    if (typeof input.libraryId === "string") {
+      // only who maintains a library hands it to the whole company
+      const { library } = await libraryFor(request, input.libraryId, "edit");
+      const items = readItems(library);
+      return parseItems(items, config.limits.maxSceneBytes);
+    }
+    return parseItems(input.libraryItems, config.limits.maxSceneBytes);
+  };
+
+  const catalogLimit = {
+    preHandler: requireAuth,
+    bodyLimit: config.limits.maxSceneBytes + 1024 * 1024,
+  };
+
+  app.get("/api/library-catalog", options, async (request, reply) => {
+    const query = request.query as Record<string, unknown>;
+    const search = searchText(queryParam(query.q));
+    let builder = db.selectFrom("library_catalog").selectAll();
+    if (search) {
+      const pattern = containsPattern(search);
+      builder = builder.where((eb) =>
+        eb.or([
+          eb("name", "ilike", pattern),
+          eb("description", "ilike", pattern),
+        ]),
+      );
+    }
+    const rows = await builder
+      .orderBy("updated_at", "desc")
+      .limit(200)
+      .execute();
+    reply.header("cache-control", "no-store");
+    return {
+      entries: await Promise.all(
+        rows.map((row) => describeEntry(request, row)),
+      ),
+    };
+  });
+
+  app.post("/api/library-catalog", catalogLimit, async (request, reply) => {
+    const input = body(request);
+    const name = cleanName(input.name);
+    const description = cleanDescription(input.description);
+    const { items, json } = await itemsToPublish(request, input);
+    if (!items.length) {
+      throw new HttpError(400, "empty", "Die Bibliothek ist leer.");
+    }
+    const keySealed = sealSceneKey(
+      config.dataEncryptionKey,
+      generateSceneKey(),
+    );
+    const sealed = await sealCatalog(keySealed, items, json);
+    const row = await db
+      .insertInto("library_catalog")
+      .values({
+        name,
+        description,
+        key_sealed: keySealed,
+        content: sealed.content,
+        preview: sealed.preview,
+        items: sealed.items,
+        size: sealed.size,
+        created_by: request.auth!.user.id,
+        updated_by: request.auth!.user.id,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    ctx.events.record({
+      type: "library_catalog.published",
+      actor: request.auth!.user,
+      request,
+      target: row.id,
+      data: { name, items: row.items },
+    });
+    return reply.code(201).send({ entry: await describeEntry(request, row) });
+  });
+
+  app.patch<{ Params: { entryId: string } }>(
+    "/api/library-catalog/:entryId",
+    catalogLimit,
+    async (request) => {
+      const row = await catalogEntry(request.params.entryId);
+      if (!mayChange(request, row)) {
+        throw new HttpError(
+          403,
+          "forbidden",
+          "Nur wer den Eintrag veröffentlicht hat, ändert ihn.",
+        );
+      }
+      const input = body(request);
+      const changes: Partial<{
+        name: string;
+        description: string;
+        content: Buffer;
+        preview: Buffer | null;
+        items: number;
+        size: number;
+      }> = {};
+      if (input.name !== undefined) {
+        changes.name = cleanName(input.name);
+      }
+      if (input.description !== undefined) {
+        changes.description = cleanDescription(input.description);
+      }
+      if (input.libraryItems !== undefined || input.libraryId !== undefined) {
+        const { items, json } = await itemsToPublish(request, input);
+        if (!items.length) {
+          throw new HttpError(400, "empty", "Die Bibliothek ist leer.");
+        }
+        Object.assign(changes, await sealCatalog(row.key_sealed, items, json));
+      }
+      const updated = await db
+        .updateTable("library_catalog")
+        .set({
+          ...changes,
+          updated_by: request.auth!.user.id,
+          updated_at: sql`now()`,
+        })
+        .where("id", "=", row.id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      ctx.events.record({
+        type: "library_catalog.updated",
+        actor: request.auth!.user,
+        request,
+        target: row.id,
+        data: { name: updated.name, items: updated.items },
+      });
+      return { entry: await describeEntry(request, updated) };
+    },
+  );
+
+  app.delete<{ Params: { entryId: string } }>(
+    "/api/library-catalog/:entryId",
+    options,
+    async (request, reply) => {
+      const row = await catalogEntry(request.params.entryId);
+      if (!mayChange(request, row)) {
+        throw new HttpError(
+          403,
+          "forbidden",
+          "Nur wer den Eintrag veröffentlicht hat, entfernt ihn.",
+        );
+      }
+      await db.deleteFrom("library_catalog").where("id", "=", row.id).execute();
+      ctx.events.record({
+        type: "library_catalog.removed",
+        actor: request.auth!.user,
+        request,
+        target: row.id,
+        data: { name: row.name },
+      });
+      return reply.code(204).send();
+    },
+  );
+
+  app.get<{ Params: { entryId: string } }>(
+    "/api/library-catalog/:entryId/preview",
+    options,
+    async (request, reply) => {
+      const row = await catalogEntry(request.params.entryId);
+      if (!row.preview) {
+        throw new HttpError(404, "not_found", "Keine Vorschau.");
+      }
+      const key = openSceneKey(config.dataEncryptionKey, row.key_sealed);
+      return reply
+        .header("cache-control", "private, max-age=86400")
+        .header("x-content-type-options", "nosniff")
+        .header(
+          "content-security-policy",
+          "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox",
+        )
+        .type("image/svg+xml; charset=utf-8")
+        .send(decryptWithSceneKey(key, row.preview));
+    },
+  );
+
+  /** the library as an .excalidrawlib file (also for #addLibrary links) */
+  app.get<{ Params: { entryId: string } }>(
+    "/api/library-catalog/:entryId/download",
+    options,
+    async (request, reply) => {
+      const row = await catalogEntry(request.params.entryId);
+      await db
+        .updateTable("library_catalog")
+        .set({ downloads: sql`downloads + 1` })
+        .where("id", "=", row.id)
+        .execute();
+      const fileName = `${row.name.replace(
+        /[^\p{L}\p{N} ._-]+/gu,
+        "_",
+      )}.excalidrawlib`;
+      return reply
+        .header("cache-control", "no-store")
+        .header(
+          "content-disposition",
+          `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+        )
+        .type("application/vnd.excalidrawlib+json")
+        .send(
+          JSON.stringify({
+            type: "excalidrawlib",
+            version: 2,
+            source: config.publicUrl.origin,
+            libraryItems: catalogItems(row),
+          }),
+        );
+    },
+  );
+
+  /** add an entry's items to my or a team library (new ones first) */
+  app.post<{ Params: { entryId: string } }>(
+    "/api/library-catalog/:entryId/add",
+    options,
+    async (request) => {
+      const row = await catalogEntry(request.params.entryId);
+      const input = body(request);
+      const target =
+        typeof input.libraryId === "string" ? input.libraryId : "personal";
+      const { library } = await libraryFor(request, target, "edit");
+      const current = readItems(library) as { id: string }[];
+      const known = new Set(current.map((item) => item.id));
+      const added = (catalogItems(row) as { id: string }[]).filter(
+        (item) => !known.has(item.id),
+      );
+      const { items, json } = parseItems(
+        [
+          ...added.map((item) => ({ ...item, status: "published" })),
+          ...current,
+        ],
+        config.limits.maxSceneBytes,
+      );
+      const key = openSceneKey(config.dataEncryptionKey, library.key_sealed);
+      const content = encryptWithSceneKey(key, Buffer.from(json, "utf8"));
+      const saved = await db
+        .updateTable("libraries")
+        .set({
+          content,
+          items: items.length,
+          size: content.length,
+          revision: sql`revision + 1`,
+          updated_by: request.auth!.user.id,
+          updated_at: sql`now()`,
+        })
+        .where("id", "=", library.id)
+        .where("revision", "=", library.revision)
+        .returning("revision")
+        .executeTakeFirst();
+      if (!saved) {
+        throw new HttpError(
+          409,
+          "conflict",
+          "Die Bibliothek wurde gerade geändert. Bitte noch einmal.",
+        );
+      }
+      await db
+        .updateTable("library_catalog")
+        .set({ downloads: sql`downloads + 1` })
+        .where("id", "=", row.id)
+        .execute();
+      record(request, library, "items", { items: items.length });
+      return { added: added.length, revision: Number(saved.revision) };
     },
   );
 };

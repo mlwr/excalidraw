@@ -42,6 +42,7 @@ const LABELS: Record<string, string> = {
   "share.read_link_deleted": "Nur-Lese-Link entfernt",
   "collection.created": "Collection angelegt",
   "collection.renamed": "Collection umbenannt",
+  "collection.moved": "Collection verschoben",
   "collection.deleted": "Collection gelöscht",
   "collection.grants": "Zugriff auf Collection geändert",
   "comment.created": "Kommentar",

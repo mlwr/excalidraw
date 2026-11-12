@@ -26,10 +26,15 @@ import type {
 } from "@excalidraw/excalidraw/types";
 
 import { fromBase64 } from "../intranet/api";
+import { createEmbedValidator } from "../intranet/embeds";
+import { registerCompanyFonts } from "../intranet/fonts";
 
 import "../index.scss";
 
 import "./workspace.scss";
+
+import type { EmbedSettings } from "../intranet/embeds";
+import type { CompanyFont } from "../intranet/fonts";
 
 const POLL_MS = 15 * 1000;
 const LOGIN_POLL_MS = 2000;
@@ -39,6 +44,10 @@ interface EmbedContent {
   key: string;
   iv: string | null;
   ciphertext: string | null;
+  /** pages the scene may show in its own embeds (E2) */
+  embeds?: EmbedSettings;
+  /** the company's fonts (E3) */
+  fonts?: CompanyFont[];
 }
 
 type State =
@@ -158,6 +167,7 @@ export const EmbedViewer = ({ token }: { token: string }) => {
       if (!content) {
         return;
       }
+      registerCompanyFonts(content.fonts);
       const elements = await decryptContent(content);
       const files = await loadFiles(
         token,
@@ -288,6 +298,9 @@ export const EmbedViewer = ({ token }: { token: string }) => {
     <div className="ws-embed">
       <Excalidraw
         onExcalidrawAPI={setApi}
+        validateEmbeddable={createEmbedValidator(
+          state.content.embeds || { allowedHosts: [], external: false },
+        )}
         initialData={{
           elements: restoreElements(state.elements, null),
           files: Object.fromEntries(state.files.map((file) => [file.id, file])),

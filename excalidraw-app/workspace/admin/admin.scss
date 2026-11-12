@@ -75,6 +75,37 @@
     max-width: 8rem;
   }
 
+  &__fonts {
+    margin: 0 0 0.8rem;
+    padding: 0;
+    list-style: none;
+
+    li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.35rem 0;
+      border-bottom: 1px solid var(--ws-border);
+    }
+  }
+
+  &__font-preview {
+    font-size: 1.15rem;
+    overflow-wrap: anywhere;
+  }
+
+  &__font-upload {
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  &__hosts {
+    width: 100%;
+    resize: vertical;
+    font-family: var(--ui-font-mono, monospace);
+  }
+
   &__toolbar {
     display: flex;
     flex-wrap: wrap;

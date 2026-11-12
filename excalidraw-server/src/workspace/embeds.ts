@@ -193,6 +193,10 @@ export const registerEmbedRoutes = (
         ciphertext: content.ciphertext
           ? content.ciphertext.toString("base64")
           : null,
+        // pages the scene may show in its embeds (E2)
+        embeds: await ctx.editor.embeds(),
+        // and the company's fonts (E3)
+        fonts: await ctx.fonts.list(),
       };
     },
   );

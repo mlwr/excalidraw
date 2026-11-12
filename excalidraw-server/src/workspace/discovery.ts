@@ -12,7 +12,7 @@ import { HttpError } from "../util/http.js";
 import { perSession as perSessionLimit } from "../util/rateLimit.js";
 import { queryParam, searchText } from "../util/validate.js";
 
-import { actorOf } from "./access.js";
+import { accessibleCollections, actorOf } from "./access.js";
 import { policiesOf, resolveWorkspace } from "./workspaces.js";
 
 import type { AppContext } from "../context.js";
@@ -77,37 +77,69 @@ export const createDiscovery = (
     return { total, results };
   };
 
-  /** every scene id the actor may export, with its folder name */
+  /**
+   * every scene id the actor may export, with its folder path; a
+   * collection comes with the collections inside it (W4)
+   */
   const exportable = async (
     current: Actor,
     scope: { workspaceId?: string; collectionId?: string },
   ) => {
-    const items: { id: string; folder: string }[] = [];
-    for (let offset = 0; ; offset += PAGE) {
-      const page = await workspace.listScenes(current, {
-        workspaceId: scope.workspaceId,
-        collectionId: scope.collectionId,
-        sort: "name",
-        limit: PAGE,
-        offset,
-      });
-      for (const scene of page.scenes) {
-        const own =
-          scene.collection.kind === "personal" &&
-          scene.role === "editor" &&
-          scene.canManage;
-        items.push({
-          id: scene.id,
-          folder:
-            scene.collection.kind === "personal"
-              ? own
-                ? "Meine Szenen"
-                : "Mit mir geteilt"
-              : scene.collection.name,
-        });
+    const visible = await accessibleCollections(
+      ctx.db,
+      current,
+      scope.workspaceId,
+    );
+    const byId = new Map(visible.map((item) => [item.collection.id, item]));
+    /** the names of the visible collections down to this one */
+    const pathOf = (collectionId: string) => {
+      const names: string[] = [];
+      let item = byId.get(collectionId);
+      for (let depth = 0; item && depth < 16; depth++) {
+        names.unshift(item.collection.name);
+        item = item.collection.parent_id
+          ? byId.get(item.collection.parent_id)
+          : undefined;
       }
-      if (page.scenes.length < PAGE) {
-        break;
+      return names;
+    };
+    const below = (collectionId: string): string[] => [
+      collectionId,
+      ...visible
+        .filter((item) => item.collection.parent_id === collectionId)
+        .flatMap((item) => below(item.collection.id)),
+    ];
+    const collectionIds = scope.collectionId
+      ? below(scope.collectionId)
+      : [undefined];
+    const items: { id: string; folder: string[] }[] = [];
+    for (const collectionId of collectionIds) {
+      for (let offset = 0; ; offset += PAGE) {
+        const page = await workspace.listScenes(current, {
+          workspaceId: scope.workspaceId,
+          collectionId,
+          sort: "name",
+          limit: PAGE,
+          offset,
+        });
+        for (const scene of page.scenes) {
+          const own =
+            scene.collection.kind === "personal" &&
+            scene.role === "editor" &&
+            scene.canManage;
+          items.push({
+            id: scene.id,
+            folder:
+              scene.collection.kind === "personal"
+                ? [own ? "Meine Szenen" : "Mit mir geteilt"]
+                : byId.has(scene.collection.id)
+                ? pathOf(scene.collection.id)
+                : [scene.collection.name],
+          });
+        }
+        if (page.scenes.length < PAGE) {
+          break;
+        }
       }
     }
     return items;
@@ -117,7 +149,7 @@ export const createDiscovery = (
   const sendZip = async (
     reply: FastifyReply,
     current: Actor,
-    items: { id: string; folder: string }[],
+    items: { id: string; folder: string[] }[],
     fileName: string,
   ) => {
     const stream = new PassThrough();
@@ -196,11 +228,10 @@ export const createDiscovery = (
           continue;
         }
         const { revision, live, files, omitted } = content;
-        let path = `${safeName(item.folder)}/${safeName(access.scene.name)}`;
+        const folder = item.folder.map(safeName).join("/");
+        let path = `${folder}/${safeName(access.scene.name)}`;
         for (let n = 2; taken.has(path.toLowerCase()); n++) {
-          path = `${safeName(item.folder)}/${safeName(
-            access.scene.name,
-          )} (${n})`;
+          path = `${folder}/${safeName(access.scene.name)} (${n})`;
         }
         taken.add(path.toLowerCase());
         await add(

@@ -42,6 +42,8 @@ export const buildContentSecurityPolicy = (
   scriptHashes: string[],
   /** /embed pages: the intranet pages that may show them (T3) */
   frameAncestors: string[] = config.cspFrameAncestors,
+  /** pages the editor may embed (E2) */
+  frameSources: string[] = config.cspFrameSrc,
 ): string => {
   const issuerOrigin = config.oidc.issuerUrl.origin;
   const directives: Record<string, string[]> = {
@@ -55,7 +57,7 @@ export const buildContentSecurityPolicy = (
     "media-src": ["'self'", "data:", "blob:"],
     "worker-src": ["'self'", "blob:"],
     "manifest-src": ["'self'"],
-    "frame-src": ["'self'", ...config.cspFrameSrc],
+    "frame-src": ["'self'", ...frameSources],
     "frame-ancestors": ["'self'", ...frameAncestors],
     "form-action": ["'self'", issuerOrigin],
     "base-uri": ["'self'"],
@@ -70,13 +72,19 @@ export const buildContentSecurityPolicy = (
  * Serves the built app (single image deployments). Without STATIC_DIR the
  * server is API-only and the app is served by another web server.
  */
-export const registerStatic = async (app: FastifyInstance, config: Config) => {
+export const registerStatic = async (
+  app: FastifyInstance,
+  config: Config,
+  /** frame sources the admins allow; they change at runtime (E2) */
+  frameSources: () => Promise<string[]> = async () => config.cspFrameSrc,
+) => {
   if (!config.staticDir) {
     return;
   }
   const root = path.resolve(config.staticDir);
   const indexHtml = readFileSync(path.join(root, "index.html"), "utf8");
-  const csp = buildContentSecurityPolicy(config, inlineScriptHashes(indexHtml));
+  const scriptHashes = inlineScriptHashes(indexHtml);
+  const csp = buildContentSecurityPolicy(config, scriptHashes);
 
   const securityHeaders: Record<string, string> = {
     "content-security-policy": csp,
@@ -116,19 +124,24 @@ export const registerStatic = async (app: FastifyInstance, config: Config) => {
     },
   });
 
-  const embedCsp = buildContentSecurityPolicy(
-    config,
-    inlineScriptHashes(indexHtml),
-    [...config.cspFrameAncestors, ...config.embedFrameAncestors],
-  );
-
-  const sendIndexHtml = (reply: FastifyReply, embed = false) => {
+  const sendIndexHtml = async (reply: FastifyReply, embed = false) => {
     for (const [name, value] of Object.entries(securityHeaders)) {
       reply.header(name, value);
     }
+    const sources = await frameSources().catch(() => config.cspFrameSrc);
+    reply.header(
+      "content-security-policy",
+      buildContentSecurityPolicy(
+        config,
+        scriptHashes,
+        // embedding pages live in iframes of intranet pages
+        embed
+          ? [...config.cspFrameAncestors, ...config.embedFrameAncestors]
+          : config.cspFrameAncestors,
+        sources,
+      ),
+    );
     if (embed) {
-      // embedding pages live in iframes of intranet pages
-      reply.header("content-security-policy", embedCsp);
       reply.removeHeader("x-frame-options");
       reply.removeHeader("cross-origin-opener-policy");
     }

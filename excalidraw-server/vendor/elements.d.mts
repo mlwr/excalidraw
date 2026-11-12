@@ -93,3 +93,64 @@ export declare const deleteElements: (
   current: readonly SceneElement[],
   ids: readonly string[],
 ) => Change;
+
+// --- rendering (I3) -------------------------------------------------------------
+
+export interface RenderOptions {
+  format: "svg" | "png";
+  /** id or name of a frame: only this frame */
+  frame?: string;
+  theme?: "light" | "dark";
+  /** false: transparent */
+  background?: boolean;
+  /** pixels per scene pixel (1 to 4) */
+  scale?: number;
+}
+
+export class RenderError extends Error {
+  readonly code: "frame_not_found" | "too_large";
+}
+
+/** largest PNG in pixels */
+export const MAX_PNG_PIXELS: number;
+
+/** the built app's fonts (STATIC_DIR/fonts), embedded into renderings */
+export function configureRenderFonts(directory: string | null): void;
+
+/** a scene (its elements and images) as an SVG text or a PNG */
+export function renderScene(
+  scene: { elements: readonly unknown[]; files: Record<string, unknown> },
+  options: RenderOptions,
+): Promise<{ svg: string } | { png: Buffer }>;
+
+/** the first items of a library side by side, as an SVG (L3) */
+export function renderLibraryPreview(
+  items: readonly { elements?: readonly unknown[] }[],
+  max?: number,
+): Promise<string>;
+
+// --- company fonts (E3) ----------------------------------------------------------
+
+export interface FontMetrics {
+  unitsPerEm: number;
+  ascender: number;
+  descender: number;
+  lineHeight: number;
+}
+
+export class FontFileError extends Error {}
+
+/** an uploaded TrueType / OpenType / WOFF2 file as WOFF2 with its metrics */
+export function prepareCompanyFont(
+  file: Uint8Array,
+): Promise<{ woff2: Uint8Array; metrics: FontMetrics }>;
+
+/** a company font for the server's renderings */
+export function registerRenderFont(font: {
+  id: number;
+  family: string;
+  metrics: FontMetrics;
+  woff2: Uint8Array;
+}): void;
+
+export function unregisterRenderFont(id: number): void;

@@ -22,8 +22,12 @@ import {
   accessibleCollections,
   actorOf,
   atLeast,
+  collectionChain,
   collectionRole,
+  collectionSubtree,
+  editableCollectionIds,
   grantMatches,
+  MAX_COLLECTION_DEPTH,
   SCENE_META_COLUMNS,
   sceneAccess,
 } from "./access.js";
@@ -497,6 +501,14 @@ export const registerWorkspaceRoutes = (
         id: collection.id,
         name: collection.name,
         kind: collection.kind,
+        // W4: the collection above, if this person sees it
+        parentId:
+          collection.parent_id &&
+          collections.some(
+            (item) => item.collection.id === collection.parent_id,
+          )
+            ? collection.parent_id
+            : null,
         role,
         sceneCount: countMap.get(collection.id) || 0,
       })),
@@ -521,29 +533,66 @@ export const registerWorkspaceRoutes = (
         );
       }
       const userId = request.auth!.user.id;
-      const { workspace, access } = await workspaceOf(
-        request,
-        "member",
-        (request.body as Record<string, unknown>)?.workspaceId,
-      );
-      if (
-        policies(workspace).collectionCreation === "admins" &&
-        access !== "admin"
-      ) {
-        return sendError(
+      const parentId = (request.body as Record<string, unknown>)?.parentId;
+      let workspaceId: string;
+      if (parentId !== undefined && parentId !== null) {
+        // W4: a collection inside another one, by those who may edit there
+        const parent = await loadCollection(
+          actor(request),
+          String(parentId),
           reply,
-          403,
-          "forbidden",
-          "In diesem Workspace legen nur Admins Collections an.",
+          "editor",
         );
+        if (!parent) {
+          return;
+        }
+        if (parent.collection.kind !== "team") {
+          return sendError(
+            reply,
+            400,
+            "personal_collection",
+            "„Meine Szenen“ hat keine Unterordner.",
+          );
+        }
+        if (
+          (await collectionChain(db, parent.collection.id)).length >=
+          MAX_COLLECTION_DEPTH
+        ) {
+          return sendError(
+            reply,
+            400,
+            "too_deep",
+            `Ordner lassen sich höchstens ${MAX_COLLECTION_DEPTH} Ebenen tief verschachteln.`,
+          );
+        }
+        workspaceId = parent.collection.workspace_id;
+      } else {
+        const { workspace, access } = await workspaceOf(
+          request,
+          "member",
+          (request.body as Record<string, unknown>)?.workspaceId,
+        );
+        if (
+          policies(workspace).collectionCreation === "admins" &&
+          access !== "admin"
+        ) {
+          return sendError(
+            reply,
+            403,
+            "forbidden",
+            "In diesem Workspace legen nur Admins Collections an.",
+          );
+        }
+        workspaceId = workspace.id;
       }
       const collection = await db.transaction().execute(async (trx) => {
         const created = await trx
           .insertInto("collections")
           .values({
-            workspace_id: workspace.id,
+            workspace_id: workspaceId,
             name,
             kind: "team",
+            parent_id: parentId ? String(parentId) : null,
             created_by: userId,
           })
           .returningAll()
@@ -564,14 +613,18 @@ export const registerWorkspaceRoutes = (
         type: "collection.created",
         actor: request.auth!.user,
         request,
-        workspaceId: workspace.id,
+        workspaceId,
         collectionId: collection.id,
-        data: { name },
+        data: {
+          name,
+          ...(collection.parent_id ? { parentId: collection.parent_id } : {}),
+        },
       });
       return reply.code(201).send({
         id: collection.id,
         name: collection.name,
         kind: collection.kind,
+        parentId: collection.parent_id,
         role: "manager",
         sceneCount: 0,
       });
@@ -594,7 +647,11 @@ export const registerWorkspaceRoutes = (
       if (loaded.collection.kind === "personal") {
         return sendError(reply, 400, "personal_collection");
       }
-      const name = cleanName((request.body as Record<string, unknown>)?.name);
+      const input = (request.body || {}) as Record<string, unknown>;
+      const name =
+        input.name === undefined
+          ? loaded.collection.name
+          : cleanName(input.name);
       if (!name) {
         return sendError(
           reply,
@@ -603,20 +660,103 @@ export const registerWorkspaceRoutes = (
           "Bitte einen Namen angeben.",
         );
       }
+      // W4: move into another collection (parentId) or to the top (null)
+      let parentId = loaded.collection.parent_id;
+      if (input.parentId !== undefined && input.parentId !== parentId) {
+        if (input.parentId === null) {
+          const { workspace, access } = await workspaceOf(
+            request,
+            "member",
+            loaded.collection.workspace_id,
+          );
+          if (
+            policies(workspace).collectionCreation === "admins" &&
+            access !== "admin"
+          ) {
+            return sendError(
+              reply,
+              403,
+              "forbidden",
+              "In diesem Workspace legen nur Admins Collections auf oberster Ebene an.",
+            );
+          }
+          parentId = null;
+        } else {
+          const target = await loadCollection(
+            actor(request),
+            String(input.parentId),
+            reply,
+            "editor",
+          );
+          if (!target) {
+            return;
+          }
+          const chain = await collectionChain(db, target.collection.id);
+          if (
+            target.collection.kind !== "team" ||
+            target.collection.workspace_id !== loaded.collection.workspace_id ||
+            chain.some((row) => row.id === loaded.collection.id)
+          ) {
+            return sendError(
+              reply,
+              400,
+              "invalid_parent",
+              "Dorthin lässt sich der Ordner nicht verschieben.",
+            );
+          }
+          const height = Math.max(
+            ...(await collectionSubtree(db, loaded.collection.id)).map((row) =>
+              Number(row.depth),
+            ),
+          );
+          if (chain.length + 1 + height > MAX_COLLECTION_DEPTH) {
+            return sendError(
+              reply,
+              400,
+              "too_deep",
+              `Ordner lassen sich höchstens ${MAX_COLLECTION_DEPTH} Ebenen tief verschachteln.`,
+            );
+          }
+          parentId = target.collection.id;
+        }
+      }
       await db
         .updateTable("collections")
-        .set({ name, updated_at: sql`now()` })
+        .set({ name, parent_id: parentId, updated_at: sql`now()` })
         .where("id", "=", loaded.collection.id)
         .execute();
-      ctx.events.record({
-        type: "collection.renamed",
-        actor: request.auth!.user,
-        request,
-        workspaceId: loaded.collection.workspace_id,
-        collectionId: loaded.collection.id,
-        data: { name, before: loaded.collection.name },
-      });
-      return { id: loaded.collection.id, name };
+      if (name !== loaded.collection.name) {
+        ctx.events.record({
+          type: "collection.renamed",
+          actor: request.auth!.user,
+          request,
+          workspaceId: loaded.collection.workspace_id,
+          collectionId: loaded.collection.id,
+          data: { name, before: loaded.collection.name },
+        });
+      }
+      if (parentId !== loaded.collection.parent_id) {
+        ctx.events.record({
+          type: "collection.moved",
+          actor: request.auth!.user,
+          request,
+          workspaceId: loaded.collection.workspace_id,
+          collectionId: loaded.collection.id,
+          data: { name, parentId, before: loaded.collection.parent_id },
+        });
+        // inherited rights changed for everything inside
+        const subtree = (await collectionSubtree(db, loaded.collection.id)).map(
+          (row) => row.id,
+        );
+        const scenes = await db
+          .selectFrom("scenes")
+          .select("id")
+          .where("collection_id", "in", subtree)
+          .where("deleted_at", "is", null)
+          .execute();
+        recheckLiveAccess(scenes.map((scene) => scene.id));
+      }
+      return { id: loaded.collection.id, name, parentId };
     },
   );
 
@@ -648,6 +788,20 @@ export const registerWorkspaceRoutes = (
           409,
           "collection_not_empty",
           "Die Collection enthält noch Szenen.",
+        );
+      }
+      const children = await db
+        .selectFrom("collections")
+        .select("id")
+        .where("parent_id", "=", loaded.collection.id)
+        .where("deleted_at", "is", null)
+        .executeTakeFirst();
+      if (children) {
+        return sendError(
+          reply,
+          409,
+          "collection_not_empty",
+          "Die Collection enthält noch Unterordner.",
         );
       }
       await db
@@ -686,8 +840,41 @@ export const registerWorkspaceRoutes = (
         .where("collection_id", "=", loaded.collection.id)
         .orderBy("principal_type")
         .execute();
+      // W4: who has access through the collections above; named only if
+      // this person sees them
+      const inherited: {
+        collection: { id: string; name: string } | null;
+        grants: Awaited<ReturnType<typeof grantsWithNames>>;
+      }[] = [];
+      if (loaded.collection.parent_id) {
+        const chain = (await collectionChain(db, loaded.collection.id)).slice(
+          1,
+        );
+        for (const link of chain) {
+          const above = await db
+            .selectFrom("collections")
+            .selectAll()
+            .where("id", "=", link.id)
+            .executeTakeFirstOrThrow();
+          const visible =
+            (await collectionRole(db, actor(request), above)) !== "none";
+          const grants = await db
+            .selectFrom("collection_grants")
+            .select(["principal_type", "principal", "role"])
+            .where("collection_id", "=", link.id)
+            .orderBy("principal_type")
+            .execute();
+          if (grants.length) {
+            inherited.push({
+              collection: visible ? { id: above.id, name: above.name } : null,
+              grants: await grantsWithNames(grants),
+            });
+          }
+        }
+      }
       return {
         grants: await grantsWithNames(rows),
+        inherited,
         canManage: loaded.role === "manager",
       };
     },
@@ -721,7 +908,8 @@ export const registerWorkspaceRoutes = (
       if (!grants || !(await validateUserGrants(grants))) {
         return sendError(reply, 400, "invalid_grants");
       }
-      if (!(await hasActiveManager(grants))) {
+      // below another collection, its managers manage this one, too (W4)
+      if (!loaded.collection.parent_id && !(await hasActiveManager(grants))) {
         return sendError(
           reply,
           400,
@@ -740,23 +928,30 @@ export const registerWorkspaceRoutes = (
           .deleteFrom("collection_grants")
           .where("collection_id", "=", loaded.collection.id)
           .execute();
-        await trx
-          .insertInto("collection_grants")
-          .values(
-            grants.map((grant) => ({
-              collection_id: loaded.collection.id,
-              principal_type: grant.type,
-              principal: grant.principal,
-              role: grant.role,
-              created_by: userId,
-            })),
-          )
-          .execute();
+        // (a collection inside another may have no grants of its own)
+        if (grants.length) {
+          await trx
+            .insertInto("collection_grants")
+            .values(
+              grants.map((grant) => ({
+                collection_id: loaded.collection.id,
+                principal_type: grant.type,
+                principal: grant.principal,
+                role: grant.role,
+                created_by: userId,
+              })),
+            )
+            .execute();
+        }
       });
+      // the collections inside inherit the change (W4)
+      const subtree = (await collectionSubtree(db, loaded.collection.id)).map(
+        (row) => row.id,
+      );
       const scenes = await db
         .selectFrom("scenes")
         .select("id")
-        .where("collection_id", "=", loaded.collection.id)
+        .where("collection_id", "in", subtree)
         .where("deleted_at", "is", null)
         .execute();
       recheckLiveAccess(scenes.map((scene) => scene.id));
@@ -880,50 +1075,27 @@ export const registerWorkspaceRoutes = (
         // deleted scenes I may restore: I manage their collection, or I
         // deleted them
         const adminHere = await isWorkspaceAdmin(db, current, workspace.id);
-        // collections (deleted ones too) where I may edit: filtered in the
-        // database, so the limit below counts only what I may see
-        const editable = db
-          .selectFrom("collections")
-          .select("collections.id")
-          .where("collections.workspace_id", "=", workspace.id)
-          .where((eb) =>
-            eb.or([
-              eb.and([
-                eb("collections.kind", "=", "personal"),
-                eb("collections.owner_id", "=", current.id),
-              ]),
-              adminHere
-                ? eb("collections.kind", "=", "team")
-                : eb.and([
-                    eb("collections.kind", "=", "team"),
-                    eb.exists(
-                      eb
-                        .selectFrom("collection_grants")
-                        .select(sql`1`.as("one"))
-                        .whereRef(
-                          "collection_grants.collection_id",
-                          "=",
-                          "collections.id",
-                        )
-                        .where("collection_grants.role", "in", [
-                          "editor",
-                          "manager",
-                        ])
-                        .where(grantMatches(current)),
-                    ),
-                  ]),
-            ]),
-          );
+        // collections (deleted ones too) where I may edit, also through
+        // a collection above (W4): filtered in the database, so the limit
+        // below counts only what I may see
+        const editable = await editableCollectionIds(
+          db,
+          current,
+          workspace.id,
+          adminHere,
+        );
         let builder = db
           .selectFrom("scenes")
           .select(SCENE_META_COLUMNS)
           .where("workspace_id", "=", workspace.id)
           .where("deleted_at", "is not", null)
           .where((eb) =>
-            eb.or([
-              eb("deleted_by", "=", current.id),
-              eb("collection_id", "in", editable),
-            ]),
+            editable.length
+              ? eb.or([
+                  eb("deleted_by", "=", current.id),
+                  eb("collection_id", "in", editable),
+                ])
+              : eb("deleted_by", "=", current.id),
           );
         if (search) {
           builder = builder.where("name", "ilike", containsPattern(search));

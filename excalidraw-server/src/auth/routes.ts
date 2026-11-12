@@ -335,6 +335,8 @@ export const registerAuth = (app: FastifyInstance, ctx: AppContext) => {
         ...clientConfig(config),
         // what this person may use
         ai: await ctx.ai.statusFor(request.auth.user),
+        embeds: await ctx.editor.embeds(),
+        fonts: await ctx.fonts.list(),
       },
     };
   });

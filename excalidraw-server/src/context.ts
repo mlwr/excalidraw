@@ -9,6 +9,8 @@ import type { Lifecycle } from "./workspace/lifecycle.js";
 import type { Search } from "./workspace/search.js";
 import type { Ai } from "./ai/service.js";
 import type { Notifications } from "./notifications/service.js";
+import type { EditorSettings } from "./editor/settings.js";
+import type { CompanyFonts } from "./editor/fonts.js";
 import type { Kysely } from "kysely";
 
 export interface RealtimeHooks {
@@ -56,6 +58,10 @@ export interface AppContext {
   search: Search;
   /** AI with the company's language model */
   ai: Ai;
+  /** what the editor may embed (E2) */
+  editor: EditorSettings;
+  /** the company's fonts (E3) */
+  fonts: CompanyFonts;
   /** in the app and by e-mail */
   notifications: Notifications;
 }
@@ -71,6 +77,8 @@ export const clientConfig = (config: Config) => ({
   maxFileSizeBytes: config.limits.maxFileBytes,
   maxImageDimension: config.limits.maxImageDimension,
   ai: { enabled: false },
+  embeds: { allowedHosts: [] as string[], external: false },
+  fonts: [] as { id: number; family: string; url: string }[],
   libraries: { browseUrl: config.libraryBrowseUrl },
   workspace: { enabled: true },
   api: {

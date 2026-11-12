@@ -320,15 +320,11 @@ export default defineConfig(({ mode }) => {
             // loading. So we exclude it by name instead.
             "**/CodeMirrorEditor-*.js",
           ],
-          // login, API and websockets must always reach the server, never
-          // the cached app shell (otherwise the login redirect would loop)
-          // /embed pages need the server's own headers (frame-ancestors)
-          navigateFallbackDenylist: [
-            /^\/api\//,
-            /^\/socket\.io\//,
-            /^\/embed\//,
-            /^\/embed-login/,
-          ],
+          // intranet fork: pages always come from the server while it is
+          // reachable: its headers change at runtime (the CSP lists the
+          // hosts admins allow for embeds) and must not come from a cached
+          // copy of index.html; offline, the last copy still opens
+          navigateFallback: null,
           // mermaid chunks are excluded here rather than via `globIgnores`
           // as their file names are arbitrary
           manifestTransforms: [
@@ -340,6 +336,20 @@ export default defineConfig(({ mode }) => {
             }),
           ],
           runtimeCaching: [
+            {
+              // login, API, websockets and /embed pages never go through
+              // the cache (otherwise the login redirect could loop)
+              urlPattern: ({ request, url }) =>
+                request.mode === "navigate" &&
+                !/^\/(api|socket\.io|embed)(\/|-|$)/.test(url.pathname),
+              handler: "NetworkFirst",
+              options: {
+                cacheName: "pages",
+                networkTimeoutSeconds: 10,
+                expiration: { maxEntries: 20 },
+                cacheableResponse: { statuses: [200] },
+              },
+            },
             {
               urlPattern: new RegExp(".+.woff2"),
               handler: "CacheFirst",

@@ -56,6 +56,8 @@ const describe = (event: ActivityEvent): ReactNode => {
           hat die Collection „{event.details.before}“ in {collection} umbenannt
         </>
       );
+    case "collection.moved":
+      return <>hat die Collection {collection} verschoben</>;
     case "collection.grants":
       return <>hat den Zugriff auf die Collection {collection} geändert</>;
     case "comment.created":

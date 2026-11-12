@@ -135,6 +135,8 @@ import DebugCanvas, {
 import { useSimulatedCollaborators } from "./debugCollaborators";
 import { AIComponents } from "./components/AI";
 import { LOCAL_EDITOR_PATH } from "./intranet/routes";
+import { createEmbedValidator } from "./intranet/embeds";
+import { registerCompanyFonts } from "./intranet/fonts";
 import {
   getCurrentUser,
   getImageOptions,
@@ -214,6 +216,10 @@ if (window.self !== window.top) {
     // ignore
   }
 }
+
+// E3: the company's fonts, before any scene loads (the app starts this
+// module only after the session and its config are there)
+registerCompanyFonts(getRuntimeConfig().fonts);
 
 const shareableLinkConfirmDialog = {
   title: t("overwriteConfirm.modal.shareableLink.title"),
@@ -486,6 +492,20 @@ const ExcalidrawWrapper = () => {
     !!getCurrentUser() && getRuntimeConfig().workspace.enabled;
   useHandleLibrary({
     excalidrawAPI,
+    // L3: libraries come from the company's own catalog
+    validateLibraryUrl: (url) => {
+      try {
+        const parsed = new URL(url, window.location.origin);
+        return (
+          parsed.origin === window.location.origin &&
+          /^\/api\/library-catalog\/[0-9a-f-]{36}\/download$/.test(
+            parsed.pathname,
+          )
+        );
+      } catch {
+        return false;
+      }
+    },
     adapter: libraryOnServer ? ServerLibraryAdapter : LibraryIndexedDBAdapter,
     migrationAdapter: libraryOnServer
       ? browserLibraryMigration
@@ -889,6 +909,14 @@ const ExcalidrawWrapper = () => {
 
   // limits come from the server's runtime config (fixed for the page's life)
   const imageOptions = useMemo(() => getImageOptions(), []);
+  // E2: pages scenes may embed, as the app admins allow
+  const validateEmbeddable = useMemo(
+    () =>
+      createEmbedValidator(
+        getRuntimeConfig().embeds || { allowedHosts: [], external: false },
+      ),
+    [],
+  );
 
   const onCollabDialogOpen = useCallback(
     () => setShareDialogState({ isOpen: true, type: "collaborationOnly" }),
@@ -994,6 +1022,7 @@ const ExcalidrawWrapper = () => {
           },
         }}
         aiEnabled={isAIEnabled}
+        validateEmbeddable={validateEmbeddable}
         imageOptions={imageOptions}
         viewModeEnabled={activeScene?.role === "viewer" ? true : undefined}
         renderTopLeftUI={() =>

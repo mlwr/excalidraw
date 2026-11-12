@@ -250,6 +250,12 @@ export const createWorkspaceService = (ctx: AppContext) => {
       id: collection.id,
       name: collection.name,
       kind: collection.kind,
+      // W4: the collection above, if visible to the actor
+      parentId:
+        collection.parent_id &&
+        collections.some((item) => item.collection.id === collection.parent_id)
+          ? collection.parent_id
+          : null,
       role,
       sceneCount: countMap.get(collection.id) || 0,
     }));

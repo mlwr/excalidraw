@@ -72,6 +72,35 @@ const workspaceAdmin = async (
 export const grantMatches = (actor: Actor): RawBuilder<boolean> =>
   sql<boolean>`((principal_type = 'user' and principal = ${actor.id}) or (principal_type = 'group' and principal = any(${actor.groups}::text[])))`;
 
+/** deepest nesting of team collections (W4): Abteilung › Projekt › Thema › … */
+export const MAX_COLLECTION_DEPTH = 5;
+
+/**
+ * A collection and the ones above it (W4), nearest first. Longer chains than
+ * the nesting allows cannot exist; the bound only guards the query.
+ */
+export const collectionChain = async (
+  db: Kysely<Database>,
+  collectionId: string,
+) =>
+  (
+    await sql<{
+      id: string;
+      parent_id: string | null;
+      deleted_at: Date | null;
+    }>`
+      with recursive chain as (
+        select id, parent_id, deleted_at, 0 as depth
+        from collections where id = ${collectionId}
+        union all
+        select c.id, c.parent_id, c.deleted_at, chain.depth + 1
+        from collections c join chain on c.id = chain.parent_id
+        where chain.depth < 16
+      )
+      select id, parent_id, deleted_at from chain order by depth
+    `.execute(db)
+  ).rows;
+
 export const collectionRole = async (
   db: Kysely<Database>,
   actor: Actor,
@@ -89,13 +118,95 @@ export const collectionRole = async (
   ) {
     return "manager";
   }
+  // W4: grants on the collections above count here, too
+  let ids = [collection.id];
+  if (collection.parent_id) {
+    const chain = await collectionChain(db, collection.id);
+    // (the collection's own state is the one passed in)
+    if (chain.slice(1).some((row) => row.deleted_at)) {
+      return "none";
+    }
+    ids = chain.map((row) => row.id);
+  }
   const grants = await db
     .selectFrom("collection_grants")
     .select("role")
-    .where("collection_id", "=", collection.id)
+    .where("collection_id", "in", ids)
     .where(grantMatches(actor))
     .execute();
   return maxRole(grants.map((grant) => grant.role as GrantRole));
+};
+
+/** a collection and all collections below it (W4), deleted ones left out */
+export const collectionSubtree = async (
+  db: Kysely<Database>,
+  collectionId: string,
+) =>
+  (
+    await sql<{ id: string; depth: number }>`
+      with recursive tree as (
+        select id, 0 as depth from collections
+        where id = ${collectionId} and deleted_at is null
+        union all
+        select c.id, tree.depth + 1
+        from collections c join tree on c.parent_id = tree.id
+        where c.deleted_at is null and tree.depth < 16
+      )
+      select id, depth from tree
+    `.execute(db)
+  ).rows;
+
+/**
+ * Collections of a workspace (deleted ones too) in which the actor may
+ * edit, through own grants or those of a collection above (W4): who may
+ * restore scenes from the trash.
+ */
+export const editableCollectionIds = async (
+  db: Kysely<Database>,
+  actor: Actor,
+  workspaceId: string,
+  isAdminHere: boolean,
+) => {
+  const rows = await db
+    .selectFrom("collections")
+    .select(["id", "kind", "owner_id", "parent_id"])
+    .where("workspace_id", "=", workspaceId)
+    .execute();
+  const team = rows.filter((row) => row.kind === "team");
+  const granted = new Set(
+    team.length
+      ? (
+          await db
+            .selectFrom("collection_grants")
+            .select("collection_id")
+            .where(
+              "collection_id",
+              "in",
+              team.map((row) => row.id),
+            )
+            .where("role", "in", ["editor", "manager"])
+            .where(grantMatches(actor))
+            .execute()
+        ).map((row) => row.collection_id)
+      : [],
+  );
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const editable = (id: string, depth = 0): boolean => {
+    const row = byId.get(id);
+    if (!row || depth > 16) {
+      return false;
+    }
+    return (
+      granted.has(id) || (!!row.parent_id && editable(row.parent_id, depth + 1))
+    );
+  };
+  return rows
+    .filter((row) =>
+      row.kind === "personal"
+        ? row.owner_id === actor.id
+        : isAdminHere || editable(row.id),
+    )
+    .map((row) => row.id);
 };
 
 /** a scene without its (possibly large) content */
@@ -233,36 +344,7 @@ export const accessibleCollections = async (
     .where((eb) =>
       eb.or([
         eb.and([eb("kind", "=", "personal"), eb("owner_id", "=", actor.id)]),
-        eb.and([
-          eb("kind", "=", "team"),
-          actor.isAdmin
-            ? sql<boolean>`true`
-            : eb.or([
-                eb.exists(
-                  eb
-                    .selectFrom("collection_grants")
-                    .select(sql`1`.as("one"))
-                    .whereRef(
-                      "collection_grants.collection_id",
-                      "=",
-                      "collections.id",
-                    )
-                    .where(grantMatches(actor)),
-                ),
-                eb.exists(
-                  eb
-                    .selectFrom("workspace_members")
-                    .select(sql`1`.as("one"))
-                    .whereRef(
-                      "workspace_members.workspace_id",
-                      "=",
-                      "collections.workspace_id",
-                    )
-                    .where("workspace_members.role", "=", "admin")
-                    .where(grantMatches(actor)),
-                ),
-              ]),
-        ]),
+        eb("kind", "=", "team"),
       ]),
     );
   if (workspaceId) {
@@ -272,13 +354,78 @@ export const accessibleCollections = async (
     .orderBy("kind", "asc")
     .orderBy("name", "asc")
     .execute();
+  const team = rows.filter((row) => row.kind === "team");
+  if (!team.length) {
+    return rows.map((collection) => ({ collection, role: "manager" }));
+  }
+
+  // roles flow down the tree (W4): own grants, or those of a parent
+  const grants = await db
+    .selectFrom("collection_grants")
+    .select(["collection_id", "role"])
+    .where(
+      "collection_id",
+      "in",
+      team.map((row) => row.id),
+    )
+    .where(grantMatches(actor))
+    .execute();
+  const direct = new Map<string, Role>();
+  for (const grant of grants) {
+    direct.set(
+      grant.collection_id,
+      maxRole([
+        direct.get(grant.collection_id) || "none",
+        grant.role as GrantRole,
+      ]),
+    );
+  }
+  const adminOf = actor.isAdmin
+    ? null
+    : new Set(
+        (
+          await db
+            .selectFrom("workspace_members")
+            .select("workspace_id")
+            .where("role", "=", "admin")
+            .where(grantMatches(actor))
+            .execute()
+        ).map((row) => row.workspace_id),
+      );
+  const byId = new Map(team.map((row) => [row.id, row]));
+  const roles = new Map<string, Role>();
+  const roleOf = (collection: Collection, depth = 0): Role => {
+    const known = roles.get(collection.id);
+    if (known) {
+      return known;
+    }
+    let role: Role;
+    if (!adminOf || adminOf.has(collection.workspace_id)) {
+      role = "manager";
+    } else {
+      const parent = collection.parent_id
+        ? byId.get(collection.parent_id)
+        : undefined;
+      // a parent that is gone (deleted) takes its subtree along
+      role =
+        collection.parent_id && !parent
+          ? "none"
+          : maxRole([
+              direct.get(collection.id) || "none",
+              parent && depth < 16 ? roleOf(parent, depth + 1) : "none",
+            ]);
+    }
+    roles.set(collection.id, role);
+    return role;
+  };
 
   const result: { collection: Collection; role: Role }[] = [];
   for (const collection of rows) {
-    result.push({
-      collection,
-      role: await collectionRole(db, actor, collection),
-    });
+    const role =
+      collection.kind === "personal" ? "manager" : roleOf(collection);
+    if (role !== "none") {
+      result.push({ collection, role });
+    }
   }
   return result;
 };

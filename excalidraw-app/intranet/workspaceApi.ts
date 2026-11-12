@@ -10,6 +10,8 @@ export interface CollectionInfo {
   id: string;
   name: string;
   kind: "personal" | "team";
+  /** the collection above (W4), if this person sees it */
+  parentId?: string | null;
   role: Role;
   sceneCount: number;
 }
@@ -304,9 +306,23 @@ export const workspaceApi = {
       await backendFetch(`/api/read-links/${encodeURIComponent(token)}`),
     ),
 
-  createCollection: async (name: string, workspaceId?: string) =>
+  createCollection: async (
+    name: string,
+    workspaceId?: string,
+    parentId?: string,
+  ) =>
     json<CollectionInfo>(
-      await send("POST", "/api/collections", { name, workspaceId }),
+      await send("POST", "/api/collections", {
+        name,
+        workspaceId,
+        ...(parentId ? { parentId } : {}),
+      }),
+    ),
+
+  /** W4: into another collection, or to the top (null) */
+  moveCollection: async (collectionId: string, parentId: string | null) =>
+    json<{ id: string; name: string; parentId: string | null }>(
+      await send("PATCH", `/api/collections/${collectionId}`, { parentId }),
     ),
 
   renameCollection: async (collectionId: string, name: string) =>
@@ -318,9 +334,15 @@ export const workspaceApi = {
     json<void>(await send("DELETE", `/api/collections/${collectionId}`)),
 
   collectionGrants: async (collectionId: string) =>
-    json<{ grants: Grant[]; canManage: boolean }>(
-      await backendFetch(`/api/collections/${collectionId}/grants`),
-    ),
+    json<{
+      grants: Grant[];
+      /** W4: access through the collections above (unnamed if not visible) */
+      inherited?: {
+        collection: { id: string; name: string } | null;
+        grants: Grant[];
+      }[];
+      canManage: boolean;
+    }>(await backendFetch(`/api/collections/${collectionId}/grants`)),
 
   setCollectionGrants: async (
     collectionId: string,

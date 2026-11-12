@@ -52,6 +52,19 @@ import type { DiagramSpec } from "./layout";
 
 export type { DiagramEdge, DiagramNode, DiagramSpec } from "./layout";
 
+export {
+  configureRenderFonts,
+  MAX_PNG_PIXELS,
+  registerRenderFont,
+  RenderError,
+  renderLibraryPreview,
+  renderScene,
+  unregisterRenderFont,
+} from "./render";
+export { FontFileError, prepareCompanyFont } from "./fonts";
+export type { FontMetrics } from "./fonts";
+export type { RenderOptions } from "./render";
+
 // --- text measurement (no canvas on the server) -------------------------------
 
 interface WidthTable {

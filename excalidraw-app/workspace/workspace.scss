@@ -566,6 +566,83 @@ select.ws-input {
   }
 }
 
+// W4: collections inside collections
+.ws-tree-row {
+  display: flex;
+  align-items: center;
+
+  .ws-nav-item {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.ws-tree-toggle {
+  flex: none;
+  width: 1.1rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ws-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid var(--ws-primary);
+  }
+}
+
+.ws-breadcrumbs {
+  margin-bottom: 0.15rem;
+  color: var(--ws-muted);
+  font-size: 0.85rem;
+
+  .ws-link {
+    padding: 0;
+    border: none;
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
+  }
+}
+
+.ws-subfolders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.ws-subfolder {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid var(--ws-border);
+  border-radius: 8px;
+  background: var(--ws-surface);
+  color: var(--ws-text);
+  font: inherit;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--ws-surface-hover);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--ws-primary);
+  }
+}
+
+.ws-inherited {
+  margin-top: 1rem;
+
+  ul {
+    margin: 0.25rem 0 0;
+    padding-left: 1.2rem;
+  }
+}
+
 .ws-nav-item {
   display: flex;
   align-items: center;
@@ -1693,5 +1770,71 @@ body.ws-presenting {
     .ws-muted {
       max-width: 32rem;
     }
+  }
+}
+
+// L3: the company's library catalog
+.ws-catalog {
+  min-height: 100vh;
+
+  &__main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1.5rem;
+  }
+
+  &__target {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+  }
+
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1rem;
+  }
+
+  &__card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.9rem;
+    border: 1px solid var(--ws-border);
+    border-radius: 10px;
+    background: var(--ws-surface);
+
+    h2 {
+      margin: 0.2rem 0 0;
+      font-size: 1.05rem;
+    }
+
+    p {
+      margin: 0;
+      overflow-wrap: anywhere;
+    }
+  }
+
+  &__preview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 150px;
+    border-radius: 8px;
+    background: #fff;
+
+    img {
+      max-width: 100%;
+      max-height: 100%;
+    }
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: auto;
+    padding-top: 0.4rem;
   }
 }

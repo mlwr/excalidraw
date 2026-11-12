@@ -46,6 +46,15 @@ const renderAdmin = async () => {
   );
 };
 
+const renderLibraryCatalog = async () => {
+  const { LibraryCatalog } = await import("./workspace/LibraryCatalog");
+  root.render(
+    <StrictMode>
+      <LibraryCatalog />
+    </StrictMode>,
+  );
+};
+
 const renderEmbed = async (token: string | null) => {
   const { EmbedViewer, EmbedLoginDone } = await import(
     "./workspace/EmbedViewer"
@@ -117,6 +126,10 @@ const start = async () => {
   if (route.kind === "admin") {
     // the server decides what each admin may see; others get the dashboard
     return renderAdmin();
+  }
+
+  if (route.kind === "libraryCatalog") {
+    return renderLibraryCatalog();
   }
 
   if (route.kind === "scene") {

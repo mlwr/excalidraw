@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 import { workspaceApi } from "../intranet/workspaceApi";
 
 import { AccessEditor } from "./AccessEditor";
-import { Button, Dialog, Notice } from "./ui";
+import { collectionLabel, subtreeIds } from "./collectionTree";
+import { Button, Dialog, Notice, ROLE_LABELS } from "./ui";
 
 import type {
   CollectionInfo,
@@ -183,7 +184,9 @@ export const MoveDialog = ({
           >
             {targets.map((collection) => (
               <option key={collection.id} value={collection.id}>
-                {collection.name}
+                {collection.kind === "personal"
+                  ? "Meine Szenen"
+                  : collectionLabel(collections, collection.id)}
               </option>
             ))}
           </select>
@@ -211,6 +214,9 @@ export const CollectionAccessDialog = ({
   onClose: () => void;
 }) => {
   const [grants, setGrants] = useState<Grant[] | null>(null);
+  const [inherited, setInherited] = useState<
+    { collection: { id: string; name: string } | null; grants: Grant[] }[]
+  >([]);
   const [canManage, setCanManage] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -220,6 +226,7 @@ export const CollectionAccessDialog = ({
       .collectionGrants(collection.id)
       .then((result) => {
         setGrants(result.grants);
+        setInherited(result.inherited || []);
         setCanManage(result.canManage);
       })
       .catch((err) => setError(err.message));
@@ -275,6 +282,128 @@ export const CollectionAccessDialog = ({
       ) : (
         !error && <p className="ws-muted">Lade …</p>
       )}
+      {inherited.length > 0 && (
+        <div className="ws-inherited">
+          <p className="ws-muted">
+            Zusätzlich gilt der Zugriff der übergeordneten Ordner:
+          </p>
+          <ul>
+            {inherited.map((entry, index) => (
+              <li key={entry.collection?.id || `hidden-${index}`}>
+                <strong>
+                  {entry.collection
+                    ? `„${entry.collection.name}“`
+                    : "ein übergeordneter Ordner"}
+                  :
+                </strong>{" "}
+                {entry.grants
+                  .map(
+                    (grant) =>
+                      `${grant.label || grant.principal} (${
+                        ROLE_LABELS[grant.role as keyof typeof ROLE_LABELS] ||
+                        grant.role
+                      })`,
+                  )
+                  .join(", ")}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {error && <Notice kind="error">{error}</Notice>}
+    </Dialog>
+  );
+};
+
+/** W4: a collection into another one, or to the top */
+export const MoveCollectionDialog = ({
+  collection,
+  collections,
+  allowTop,
+  onMoved,
+  onClose,
+}: {
+  collection: CollectionInfo;
+  collections: CollectionInfo[];
+  /** top level: only if this person may create collections there */
+  allowTop: boolean;
+  onMoved: () => void;
+  onClose: () => void;
+}) => {
+  const inside = subtreeIds(collections, collection.id);
+  const targets = collections.filter(
+    (item) =>
+      item.kind === "team" &&
+      (item.role === "editor" || item.role === "manager") &&
+      !inside.has(item.id) &&
+      item.id !== collection.parentId,
+  );
+  const options = [
+    ...(allowTop && collection.parentId
+      ? [{ id: "", label: "Oberste Ebene" }]
+      : []),
+    ...targets.map((item) => ({
+      id: item.id,
+      label: collectionLabel(collections, item.id),
+    })),
+  ];
+  const [target, setTarget] = useState<string | null>(
+    options[0] ? options[0].id : null,
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <Dialog
+      title={`„${collection.name}“ verschieben`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Abbrechen</Button>
+          <Button
+            variant="primary"
+            disabled={target === null}
+            onClick={async () => {
+              try {
+                await workspaceApi.moveCollection(
+                  collection.id,
+                  target || null,
+                );
+                onMoved();
+                onClose();
+              } catch (err: any) {
+                setError(err.message);
+              }
+            }}
+          >
+            Verschieben
+          </Button>
+        </>
+      }
+    >
+      {options.length ? (
+        <label className="ws-field">
+          <span>Ziel</span>
+          <select
+            className="ws-input"
+            value={target ?? ""}
+            onChange={(event) => setTarget(event.target.value)}
+          >
+            {options.map((option) => (
+              <option key={option.id || "top"} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <p className="ws-muted">
+          Es gibt keinen Ordner, in den du diesen verschieben darfst.
+        </p>
+      )}
+      <p className="ws-muted">
+        Unterordner kommen mit. Danach gilt zusätzlich der Zugriff des neuen
+        übergeordneten Ordners; eigene Freigaben bleiben.
+      </p>
       {error && <Notice kind="error">{error}</Notice>}
     </Dialog>
   );

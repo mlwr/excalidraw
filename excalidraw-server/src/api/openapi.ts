@@ -364,6 +364,56 @@ export const openApiDocument = (config: Config) => ({
         responses: { "204": ok("Gelöscht"), ...errors },
       },
     },
+    "/scenes/{sceneId}/image": {
+      get: {
+        summary:
+          "Szene oder einen Frame als SVG oder PNG (für Dokumentation, Wikis, Pipelines)",
+        parameters: [
+          sceneId,
+          {
+            name: "format",
+            in: "query",
+            schema: { enum: ["svg", "png"] },
+            description: "Standard svg",
+          },
+          {
+            name: "frame",
+            in: "query",
+            schema: { type: "string" },
+            description: "nur dieser Frame (Name oder id)",
+          },
+          {
+            name: "theme",
+            in: "query",
+            schema: { enum: ["light", "dark"] },
+          },
+          {
+            name: "background",
+            in: "query",
+            schema: { enum: ["true", "false"] },
+            description: "false: transparent",
+          },
+          {
+            name: "scale",
+            in: "query",
+            schema: { type: "number", minimum: 1, maximum: 4 },
+            description: "Pixel pro Szenenpixel (Standard 1)",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Das Bild",
+            content: {
+              "image/svg+xml": { schema: { type: "string" } },
+              "image/png": { schema: { type: "string", format: "binary" } },
+            },
+          },
+          ...errors,
+          "404": ok("Szene oder Frame nicht gefunden", ref("Error")),
+          "422": ok("Bild zu groß", ref("Error")),
+        },
+      },
+    },
     "/scenes/{sceneId}/content": {
       get: {
         summary: "Inhalt als .excalidraw-Dokument",

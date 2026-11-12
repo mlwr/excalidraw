@@ -34,6 +34,7 @@ export type EventType =
   | "share.read_link_deleted"
   | "collection.created"
   | "collection.renamed"
+  | "collection.moved"
   | "collection.deleted"
   | "collection.grants"
   | "comment.created"
@@ -53,9 +54,15 @@ export type EventType =
   | "admin.branding"
   | "admin.audit_exported"
   | "admin.ai_settings"
+  | "admin.embed_settings"
+  | "admin.font_added"
+  | "admin.font_removed"
   | "share.embed_created"
   | "share.embed_deleted"
-  | "library.changed";
+  | "library.changed"
+  | "library_catalog.published"
+  | "library_catalog.updated"
+  | "library_catalog.removed";
 
 /** what the activity feed shows */
 export const FEED_TYPES: EventType[] = [
@@ -70,6 +77,7 @@ export const FEED_TYPES: EventType[] = [
   "share.read_link_created",
   "collection.created",
   "collection.renamed",
+  "collection.moved",
   "collection.grants",
   "comment.created",
   "comment.replied",

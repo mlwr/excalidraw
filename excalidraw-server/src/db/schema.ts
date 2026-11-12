@@ -125,6 +125,12 @@ export interface CollectionsTable {
   name: string;
   kind: "personal" | "team";
   owner_id: string | null;
+  /** team collections in team collections (W4) */
+  parent_id: ColumnType<
+    string | null,
+    string | null | undefined,
+    string | null
+  >;
   created_by: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
@@ -325,6 +331,49 @@ export interface SettingsTable {
   updated_by: string | null;
 }
 
+/** the company's fonts (E3) */
+export interface CompanyFontsTable {
+  id: Generated<number>;
+  family: string;
+  /** WOFF2 */
+  file: Buffer;
+  size: number;
+  metrics: ColumnType<FontMetrics, string, string>;
+  created_by: string | null;
+  created_at: Timestamp;
+  deleted_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+}
+
+/** the font metrics the editor positions text with */
+export interface FontMetrics {
+  unitsPerEm: number;
+  ascender: number;
+  descender: number;
+  lineHeight: number;
+}
+
+/** the company's library catalog (L3) */
+export interface LibraryCatalogTable {
+  id: Generated<string>;
+  name: string;
+  description: ColumnType<string, string | undefined, string>;
+  items: ColumnType<number, number | undefined, number>;
+  size: ColumnType<number, number | undefined, number>;
+  key_sealed: Buffer;
+  content: Buffer;
+  /** an SVG of the first items, encrypted */
+  preview: Buffer | null;
+  downloads: ColumnType<number, number | undefined, number>;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 /** AI usage of past days: sums only, no persons */
 export interface AiUsageDailyTable {
   day: ColumnType<string, string, string>;
@@ -433,6 +482,8 @@ export interface Database {
   settings: SettingsTable;
   ai_usage: AiUsageTable;
   ai_usage_daily: AiUsageDailyTable;
+  library_catalog: LibraryCatalogTable;
+  company_fonts: CompanyFontsTable;
   libraries: LibrariesTable;
   notifications: NotificationsTable;
   user_preferences: UserPreferencesTable;

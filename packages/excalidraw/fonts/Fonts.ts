@@ -417,6 +417,46 @@ export class Fonts {
   }
 
   /**
+   * Intranet fork (E3): a font of the host (the company's fonts, uploaded by
+   * its admins) under its own id, 1000 or above. It shows in the font
+   * picker, loads for text that uses it and is embedded on export, like the
+   * bundled fonts. Call before scenes are loaded.
+   *
+   * @returns false if the id or the name is taken by another font
+   */
+  public static registerCompanyFont({
+    family,
+    id,
+    url,
+    metrics,
+  }: {
+    family: string;
+    id: number;
+    url: string;
+    /** from the font's head and hhea tables; any units per em */
+    metrics: Omit<FontMetadata["metrics"], "unitsPerEm"> & {
+      unitsPerEm: number;
+    };
+  }) {
+    const families = FONT_FAMILY as unknown as Record<string, number>;
+    const taken = Object.entries(families).find(
+      ([name, value]) => value === id && name !== family,
+    );
+    if (
+      id < 1000 ||
+      taken ||
+      (families[family] !== undefined && families[family] < 1000)
+    ) {
+      return false;
+    }
+    // the same name again (removed and uploaded anew): the new font
+    families[family] = id;
+    FONT_METADATA[id] = { metrics: metrics as FontMetadata["metrics"] };
+    Fonts.register.call(Fonts, family, FONT_METADATA[id], { uri: url });
+    return true;
+  }
+
+  /**
    * WARN: should be called just once on init, even across multiple instances.
    */
   private static init() {

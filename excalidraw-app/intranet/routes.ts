@@ -15,11 +15,14 @@ export type AppRoute =
   | { kind: "scene"; sceneId: string }
   | { kind: "readLink"; token: string }
   | { kind: "admin" }
+  | { kind: "libraryCatalog" }
   | { kind: "embed"; token: string }
   | { kind: "embedLogin" };
 
 export const LOCAL_EDITOR_PATH = "/local";
 export const ADMIN_PATH = "/admin";
+/** the company's library catalog (L3); the editor's "Browse libraries" */
+export const LIBRARY_CATALOG_PATH = "/libraries";
 
 export const scenePath = (sceneId: string) =>
   `/s/${encodeURIComponent(sceneId)}`;
@@ -40,6 +43,9 @@ export const getRoute = (location: Location = window.location): AppRoute => {
   }
   if (path === ADMIN_PATH) {
     return { kind: "admin" };
+  }
+  if (path === LIBRARY_CATALOG_PATH) {
+    return { kind: "libraryCatalog" };
   }
   const embed = path.match(/^\/embed\/([a-zA-Z0-9_-]{16,64})$/);
   if (embed) {

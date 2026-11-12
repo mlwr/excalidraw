@@ -237,6 +237,22 @@ export const ApiTokensDialog = ({ onClose }: { onClose: () => void }) => {
           label="Beispiel REST-API"
           value={`curl -H "Authorization: Bearer ${shown}" ${origin}/api/v1/scenes`}
         />
+        <p className="ws-muted">
+          Kommandozeile (Node.js 20 oder neuer):{" "}
+          <a href="/api/v1/cli" download="excalidraw.mjs">
+            excalidraw.mjs herunterladen
+          </a>
+          . Szenen auflisten, exportieren, importieren und als SVG oder PNG
+          rendern, etwa für Dokumentation:
+        </p>
+        <CopyField
+          label="Beispiel Kommandozeile"
+          value={`export EXCALIDRAW_URL=${origin}\nexport EXCALIDRAW_TOKEN=${shown}\nnode excalidraw.mjs render <Szenen-ID> --frame "Folie 1" -o diagramm.png`}
+        />
+        <p className="ws-muted">
+          Bilder direkt als URL, z. B. für Pipelines:{" "}
+          <code>{`${origin}/api/v1/scenes/<ID>/image?format=png`}</code>
+        </p>
         {state?.mcpEnabled && (
           <>
             <p className="ws-muted">

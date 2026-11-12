@@ -7,6 +7,8 @@
  * kept in sessionStorage and never sent to the server.
  */
 
+import type { CompanyFont } from "./fonts";
+
 export interface IntranetUser {
   id: string;
   name: string;
@@ -20,6 +22,10 @@ export interface RuntimeConfig {
   maxImageDimension: number;
   /** AI through the company's language model, as far as this person may */
   ai: { enabled: boolean; diagramToCode?: boolean; dailyLimit?: number };
+  /** pages scenes may embed (E2) */
+  embeds: { allowedHosts: string[]; external: boolean };
+  /** the company's fonts (E3) */
+  fonts?: CompanyFont[];
   libraries: { browseUrl: string | null };
   workspace: { enabled: boolean };
   /** REST API and MCP server with personal API tokens */
@@ -37,6 +43,7 @@ const DEFAULT_CONFIG: RuntimeConfig = {
   maxFileSizeBytes: 4 * 1024 * 1024,
   maxImageDimension: 1440,
   ai: { enabled: false },
+  embeds: { allowedHosts: [], external: false },
   libraries: { browseUrl: null },
   workspace: { enabled: false },
   api: { enabled: false, mcpEnabled: false },

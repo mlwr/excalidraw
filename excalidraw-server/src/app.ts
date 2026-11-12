@@ -1,9 +1,12 @@
 import { STATUS_CODES } from "node:http";
+import path from "node:path";
 
 import fastifyCookie from "@fastify/cookie";
 import fastifyRateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
 import { sql } from "kysely";
+
+import { configureRenderFonts } from "../vendor/elements.mjs";
 
 import { OidcClient } from "./auth/oidc.js";
 import { registerAuth } from "./auth/routes.js";
@@ -23,6 +26,7 @@ import {
   registerCommentRoutes,
   registerTokenRoutes,
 } from "./api/routes.js";
+import { registerRenderRoutes } from "./api/render.js";
 import { createRequireToken, TokenStore } from "./auth/tokens.js";
 import { createEventLog } from "./events.js";
 import { startJobs } from "./jobs.js";
@@ -32,6 +36,8 @@ import { createSearch } from "./workspace/search.js";
 import { registerAdminRoutes } from "./admin/routes.js";
 import { registerAiRoutes } from "./ai/routes.js";
 import { createAi } from "./ai/service.js";
+import { createEditorSettings } from "./editor/settings.js";
+import { createCompanyFonts, registerFontRoutes } from "./editor/fonts.js";
 import { registerNotificationRoutes } from "./notifications/routes.js";
 import { createNotifications } from "./notifications/service.js";
 import { registerMcp } from "./mcp/server.js";
@@ -129,6 +135,20 @@ export const buildApp = async (
   } as AppContext;
   ctx.lifecycle = createLifecycle(ctx);
   ctx.ai = createAi(ctx);
+  ctx.editor = createEditorSettings(ctx);
+  ctx.fonts = createCompanyFonts(ctx);
+  // the server's own renderer (API images, library previews): the app's
+  // fonts and the company's (E3)
+  configureRenderFonts(
+    config.staticDir
+      ? path.join(path.resolve(config.staticDir), "fonts")
+      : null,
+  );
+  void ctx.fonts
+    .loadIntoRenderer()
+    .catch((error) =>
+      app.log.warn({ err: error }, "company fonts not loaded for rendering"),
+    );
   ctx.notifications = createNotifications(ctx);
   ctx.search = createSearch(ctx);
 
@@ -231,6 +251,7 @@ export const buildApp = async (
   registerLibraryRoutes(app, ctx, requireAuth);
   registerNotificationRoutes(app, ctx, requireAuth);
   registerEmbedRoutes(app, ctx, requireAuth);
+  registerFontRoutes(app, ctx, requireAuth);
   if (config.api.enabled) {
     const requireToken = createRequireToken(new TokenStore(ctx.db, config));
     registerTokenRoutes(app, ctx, requireAuth);
@@ -240,6 +261,8 @@ export const buildApp = async (
       { workspace, operations, comments, discovery },
       requireToken,
     );
+    // I3: scenes as SVG and PNG, and the command line tool
+    registerRenderRoutes(app, ctx, { workspace }, requireToken);
     if (config.api.mcpEnabled) {
       registerMcp(
         app,
@@ -249,7 +272,7 @@ export const buildApp = async (
       );
     }
   }
-  await registerStatic(app, config);
+  await registerStatic(app, config, () => ctx.editor.frameSources());
 
   const { io, hooks } = attachRealtime(
     app,

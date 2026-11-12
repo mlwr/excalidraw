@@ -18,7 +18,8 @@ export const isSaneJson = (value: unknown, depth = 0): boolean => {
   }
   switch (typeof value) {
     case "number":
-      return Number.isFinite(value) && Math.abs(value) <= 1e12;
+      // 1e15: room for millisecond timestamps (elements' "updated")
+      return Number.isFinite(value) && Math.abs(value) <= 1e15;
     case "string":
       return value.length <= 100_000;
     case "boolean":

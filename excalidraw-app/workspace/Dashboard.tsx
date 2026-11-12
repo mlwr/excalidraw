@@ -9,7 +9,12 @@ import {
 } from "react";
 
 import { logoUrl, useBranding } from "../intranet/branding";
-import { ADMIN_PATH, LOCAL_EDITOR_PATH, scenePath } from "../intranet/routes";
+import {
+  ADMIN_PATH,
+  LIBRARY_CATALOG_PATH,
+  LOCAL_EDITOR_PATH,
+  scenePath,
+} from "../intranet/routes";
 import { getCurrentUser, getRuntimeConfig, logout } from "../intranet/session";
 import { workspaceApi } from "../intranet/workspaceApi";
 
@@ -19,9 +24,11 @@ import { ApiTokensDialog } from "./ApiTokensDialog";
 import {
   CollectionAccessDialog,
   ConfirmDialog,
+  MoveCollectionDialog,
   MoveDialog,
   NameDialog,
 } from "./DashboardDialogs";
+import { childrenOf, collectionPath, flattenTree } from "./collectionTree";
 import { SceneShareContent } from "./SceneShareContent";
 import { TrashView } from "./TrashView";
 import { Avatar, Button, Dialog, Notice, formatRelative } from "./ui";
@@ -45,7 +52,8 @@ const LIST_VIEWS = ["shared", "activity", "trash"] as const;
 const MIN_SEARCH = 2;
 
 type Modal =
-  | { kind: "newCollection" }
+  | { kind: "newCollection"; parentId?: string }
+  | { kind: "moveCollection"; collection: CollectionInfo }
   | { kind: "renameCollection"; collection: CollectionInfo }
   | { kind: "deleteCollection"; collection: CollectionInfo }
   | { kind: "collectionAccess"; collection: CollectionInfo }
@@ -290,6 +298,8 @@ export const Dashboard = () => {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SceneSort>("updated");
   const [modal, setModal] = useState<Modal | null>(null);
+  // W4: subtrees folded away in the sidebar
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -633,18 +643,52 @@ export const Dashboard = () => {
               Noch keine. Collections teilen Szenen mit Teams.
             </p>
           )}
-          {teamCollections.map((collection) => (
-            <Fragment key={collection.id}>
-              {navItem(
-                { kind: "collection", id: collection.id },
-                collection.name,
-                collection.sceneCount,
-              )}
-            </Fragment>
-          ))}
+          {flattenTree(teamCollections, collapsed).map(
+            ({ collection, depth, hasChildren }) => (
+              <div
+                key={collection.id}
+                className="ws-tree-row"
+                style={{ paddingInlineStart: `${depth * 0.9}rem` }}
+              >
+                {hasChildren ? (
+                  <button
+                    type="button"
+                    className="ws-tree-toggle"
+                    aria-expanded={!collapsed.has(collection.id)}
+                    aria-label={
+                      collapsed.has(collection.id)
+                        ? `${collection.name} aufklappen`
+                        : `${collection.name} zuklappen`
+                    }
+                    onClick={() =>
+                      setCollapsed((current) => {
+                        const next = new Set(current);
+                        if (!next.delete(collection.id)) {
+                          next.add(collection.id);
+                        }
+                        return next;
+                      })
+                    }
+                  >
+                    {collapsed.has(collection.id) ? "▸" : "▾"}
+                  </button>
+                ) : (
+                  <span className="ws-tree-toggle" aria-hidden="true" />
+                )}
+                {navItem(
+                  { kind: "collection", id: collection.id },
+                  collection.name,
+                  collection.sceneCount,
+                )}
+              </div>
+            ),
+          )}
 
           <div className="ws-sidebar__footer">
             {navItem({ kind: "trash" }, "Papierkorb")}
+            <a className="ws-nav-item" href={LIBRARY_CATALOG_PATH}>
+              <span className="ws-nav-item__label">Bibliotheken</span>
+            </a>
             {canExport && (
               <a
                 className="ws-nav-item"
@@ -682,6 +726,28 @@ export const Dashboard = () => {
         <main className="ws-main">
           <div className="ws-main__header">
             <div>
+              {isSceneList &&
+                currentCollection?.kind === "team" &&
+                currentCollection.parentId && (
+                  <nav className="ws-breadcrumbs" aria-label="Ordnerpfad">
+                    {collectionPath(teamCollections, currentCollection.id)
+                      .slice(0, -1)
+                      .map((item) => (
+                        <Fragment key={item.id}>
+                          <button
+                            type="button"
+                            className="ws-link"
+                            onClick={() =>
+                              navigate({ kind: "collection", id: item.id })
+                            }
+                          >
+                            {item.name}
+                          </button>
+                          <span aria-hidden="true"> › </span>
+                        </Fragment>
+                      ))}
+                  </nav>
+                )}
               <h1>{title}</h1>
               <p className="ws-muted">{subtitle}</p>
             </div>
@@ -705,6 +771,19 @@ export const Dashboard = () => {
                       ? "Zugriff verwalten"
                       : "Zugriff anzeigen"}
                   </Button>
+                  {(currentCollection.role === "editor" ||
+                    currentCollection.role === "manager") && (
+                    <Button
+                      onClick={() =>
+                        setModal({
+                          kind: "newCollection",
+                          parentId: currentCollection.id,
+                        })
+                      }
+                    >
+                      Neuer Unterordner
+                    </Button>
+                  )}
                   {currentCollection.role === "manager" && (
                     <>
                       <Button
@@ -716,6 +795,16 @@ export const Dashboard = () => {
                         }
                       >
                         Umbenennen
+                      </Button>
+                      <Button
+                        onClick={() =>
+                          setModal({
+                            kind: "moveCollection",
+                            collection: currentCollection,
+                          })
+                        }
+                      >
+                        Verschieben
                       </Button>
                       <Button
                         variant="ghost"
@@ -787,6 +876,28 @@ export const Dashboard = () => {
           </div>
 
           {error && <Notice kind="error">{error}</Notice>}
+
+          {isSceneList &&
+            currentCollection?.kind === "team" &&
+            childrenOf(teamCollections, currentCollection.id).length > 0 && (
+              <nav className="ws-subfolders" aria-label="Unterordner">
+                {childrenOf(teamCollections, currentCollection.id).map(
+                  (child) => (
+                    <button
+                      key={child.id}
+                      type="button"
+                      className="ws-subfolder"
+                      onClick={() =>
+                        navigate({ kind: "collection", id: child.id })
+                      }
+                    >
+                      <span aria-hidden="true">🗀</span> {child.name}
+                      <span className="ws-muted"> {child.sceneCount}</span>
+                    </button>
+                  ),
+                )}
+              </nav>
+            )}
 
           {searching ? (
             results === null ? (
@@ -861,7 +972,14 @@ export const Dashboard = () => {
 
       {modal?.kind === "newCollection" && (
         <NameDialog
-          title="Neue Collection"
+          title={
+            modal.parentId
+              ? `Neuer Unterordner in „${
+                  collections?.find((item) => item.id === modal.parentId)
+                    ?.name || "Collection"
+                }“`
+              : "Neue Collection"
+          }
           label="Name"
           submitLabel="Anlegen"
           onClose={() => setModal(null)}
@@ -869,10 +987,20 @@ export const Dashboard = () => {
             const created = await workspaceApi.createCollection(
               name,
               workspace?.id,
+              modal.parentId,
             );
             await loadOverview();
             navigate({ kind: "collection", id: created.id });
           }}
+        />
+      )}
+      {modal?.kind === "moveCollection" && collections && (
+        <MoveCollectionDialog
+          collection={modal.collection}
+          collections={collections}
+          allowTop={canCreateCollection}
+          onMoved={refreshAll}
+          onClose={() => setModal(null)}
         />
       )}
       {modal?.kind === "renameCollection" && (
@@ -891,7 +1019,7 @@ export const Dashboard = () => {
       {modal?.kind === "deleteCollection" && (
         <ConfirmDialog
           title="Collection löschen"
-          text={`„${modal.collection.name}“ wird gelöscht. Das geht nur, wenn sie keine Szenen mehr enthält.`}
+          text={`„${modal.collection.name}“ wird gelöscht. Das geht nur, wenn sie keine Szenen und keine Unterordner mehr enthält.`}
           confirmLabel="Löschen"
           onClose={() => setModal(null)}
           onConfirm={async () => {

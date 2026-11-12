@@ -5,6 +5,8 @@ import { BackendError, backendFetch } from "./api";
 
 import type { Branding } from "./branding";
 import type { PrincipalType, WorkspacePolicies } from "./workspaceApi";
+import type { EmbedSettings } from "./embeds";
+import type { CompanyFont } from "./fonts";
 
 export interface AdminWorkspace {
   id: string;
@@ -217,6 +219,35 @@ export const adminApi = {
     json<{ settings: AiSettings }>(
       await send("PUT", "/api/admin/ai", settings),
     ),
+
+  embeds: async () =>
+    json<{ settings: EmbedSettings; configured: string[] }>(
+      await backendFetch("/api/admin/embeds"),
+    ),
+
+  saveEmbeds: async (settings: Partial<EmbedSettings>) =>
+    json<{ settings: EmbedSettings }>(
+      await send("PUT", "/api/admin/embeds", settings),
+    ),
+
+  fonts: async () =>
+    json<{ fonts: CompanyFont[] }>(await backendFetch("/api/fonts")),
+
+  /** E3: TrueType, OpenType or WOFF2 */
+  uploadFont: async (family: string, file: File) =>
+    json<{ font: CompanyFont }>(
+      await backendFetch(
+        `/api/admin/fonts?family=${encodeURIComponent(family)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: file,
+        },
+      ),
+    ),
+
+  deleteFont: async (id: number) =>
+    json<void>(await send("DELETE", `/api/admin/fonts/${id}`)),
 
   stats: async () =>
     json<Record<string, unknown>>(await backendFetch("/api/admin/stats")),

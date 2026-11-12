@@ -5,6 +5,8 @@ import { Server } from "socket.io";
 
 import { encryptForBrowser } from "../workspace/content.js";
 
+import { attachPresenting, PRESENTING_ROOM_PREFIXES } from "./presenting.js";
+
 import type { SessionStore } from "../auth/sessions.js";
 import type { Config } from "../config.js";
 import type { RealtimeHooks } from "../context.js";
@@ -61,7 +63,8 @@ const isCollabRoom = (room: string, socketId: string) =>
   room !== socketId &&
   !room.startsWith("session:") &&
   !room.startsWith("user:") &&
-  !room.startsWith(FOLLOW_ROOM_PREFIX);
+  !room.startsWith(FOLLOW_ROOM_PREFIX) &&
+  !PRESENTING_ROOM_PREFIXES.some((prefix) => room.startsWith(prefix));
 
 const toBuffer = (value: unknown): Buffer | null => {
   if (Buffer.isBuffer(value)) {
@@ -188,6 +191,8 @@ export const attachRealtime = (
 
     socket.join(`session:${socket.data.sessionId}`);
     socket.join(`user:${socket.data.userId}`);
+    // Phase 6: phone remote (P4) and live presentations (P6)
+    attachPresenting(io, socket);
 
     io.to(socket.id).emit("init-room");
 

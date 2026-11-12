@@ -13,6 +13,7 @@ import { sql } from "kysely";
 import { HttpError, sendError } from "../util/http.js";
 import { hasControlChars, queryParam, searchText } from "../util/validate.js";
 import { actorOf } from "../workspace/access.js";
+import { MAX_EMBED_HOSTS, parseHostPattern } from "../editor/settings.js";
 import {
   clearForbiddenSharing,
   parsePolicies,
@@ -1176,6 +1177,68 @@ export const registerAdminRoutes = (
     await ctx.ai.saveSettings(next, request.auth!.user.id);
     ctx.events.record({
       type: "admin.ai_settings",
+      actor: request.auth!.user,
+      request,
+      data: { ...next },
+    });
+    return { settings: next };
+  });
+
+  // --- editor: pages scenes may embed (E2) ------------------------------------------
+
+  app.get("/api/admin/embeds", options, async (request, reply) => {
+    requireAppAdmin(request);
+    reply.header("cache-control", "no-store");
+    return {
+      settings: await ctx.editor.embeds(),
+      // set by the operators, always allowed
+      configured: config.cspFrameSrc,
+    };
+  });
+
+  app.put("/api/admin/embeds", options, async (request) => {
+    requireAppAdmin(request);
+    const input = body(request);
+    const next = { ...(await ctx.editor.embeds()) };
+    if (input.external !== undefined) {
+      if (typeof input.external !== "boolean") {
+        throw new HttpError(400, "invalid_input", "external: true oder false.");
+      }
+      next.external = input.external;
+    }
+    if (input.allowedHosts !== undefined) {
+      if (
+        !Array.isArray(input.allowedHosts) ||
+        input.allowedHosts.length > MAX_EMBED_HOSTS
+      ) {
+        throw new HttpError(
+          400,
+          "invalid_input",
+          `allowedHosts: Liste mit höchstens ${MAX_EMBED_HOSTS} Hosts.`,
+        );
+      }
+      const hosts: string[] = [];
+      for (const entry of input.allowedHosts) {
+        const host = typeof entry === "string" ? parseHostPattern(entry) : null;
+        if (!host) {
+          throw new HttpError(
+            400,
+            "invalid_host",
+            `„${String(entry).slice(
+              0,
+              100,
+            )}“ ist kein Host wie wiki.intranet.example oder *.intranet.example (nur https).`,
+          );
+        }
+        if (!hosts.includes(host)) {
+          hosts.push(host);
+        }
+      }
+      next.allowedHosts = hosts;
+    }
+    await ctx.editor.saveEmbeds(next, request.auth!.user.id);
+    ctx.events.record({
+      type: "admin.embed_settings",
       actor: request.auth!.user,
       request,
       data: { ...next },
