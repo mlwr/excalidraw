@@ -238,10 +238,41 @@ export const registerDiscoveryRoutes = (
         queryParam(query.workspace),
       );
       reply.header("cache-control", "no-store");
-      return discovery.search(current, {
+      const found = await discovery.search(current, {
         workspaceId: workspace.id,
         query: queryParam(query.q) || "",
       });
+      // the dashboard shows results like its scene lists (with thumbnails)
+      const ids = found.results.map((scene) => scene.id);
+      const thumbnails = new Map(
+        (ids.length
+          ? await db
+              .selectFrom("scenes")
+              .select(["id", "thumbnail_updated_at"])
+              .where("id", "in", ids)
+              .execute()
+          : []
+        ).map((row) => [row.id, row.thumbnail_updated_at]),
+      );
+      return {
+        total: found.total,
+        results: found.results.map(
+          ({ url, revision, createdBy, updatedBy, ...scene }) => {
+            const thumbnail = thumbnails.get(scene.id);
+            return {
+              ...scene,
+              createdBy: createdBy?.name ?? null,
+              updatedBy: updatedBy?.name ?? null,
+              thumbnailUrl: thumbnail
+                ? `/api/scenes/${scene.id}/thumbnail?v=${new Date(
+                    thumbnail,
+                  ).getTime()}`
+                : null,
+              activeUsers: [],
+            };
+          },
+        ),
+      };
     },
   );
 

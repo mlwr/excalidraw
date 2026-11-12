@@ -1,10 +1,19 @@
 import clsx from "clsx";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-import { LOCAL_EDITOR_PATH, scenePath } from "../intranet/routes";
+import { logoUrl, useBranding } from "../intranet/branding";
+import { ADMIN_PATH, LOCAL_EDITOR_PATH, scenePath } from "../intranet/routes";
 import { getCurrentUser, getRuntimeConfig, logout } from "../intranet/session";
 import { workspaceApi } from "../intranet/workspaceApi";
 
+import { ActivityFeed } from "./ActivityFeed";
 import { ApiTokensDialog } from "./ApiTokensDialog";
 import {
   CollectionAccessDialog,
@@ -13,18 +22,26 @@ import {
   NameDialog,
 } from "./DashboardDialogs";
 import { SceneShareContent } from "./SceneShareContent";
+import { TrashView } from "./TrashView";
 import { Avatar, Button, Dialog, Notice, formatRelative } from "./ui";
 
 import type {
   CollectionInfo,
   SceneSort,
   SceneSummary,
+  SearchResult,
+  WorkspaceOverview,
 } from "../intranet/workspaceApi";
 
 type View =
   | { kind: "recent" }
   | { kind: "shared" }
+  | { kind: "activity" }
+  | { kind: "trash" }
   | { kind: "collection"; id: string };
+
+const LIST_VIEWS = ["shared", "activity", "trash"] as const;
+const MIN_SEARCH = 2;
 
 type Modal =
   | { kind: "newCollection" }
@@ -45,17 +62,24 @@ const readViewFromUrl = (): View => {
   if (collection) {
     return { kind: "collection", id: collection };
   }
-  return params.get("view") === "shared"
-    ? { kind: "shared" }
-    : { kind: "recent" };
+  const view = params.get("view");
+  const known = LIST_VIEWS.find((kind) => kind === view);
+  return known ? { kind: known } : { kind: "recent" };
 };
 
-const writeViewToUrl = (view: View) => {
+/** "" = the default workspace */
+const readWorkspaceFromUrl = () =>
+  new URLSearchParams(window.location.search).get("w") || "";
+
+const writeViewToUrl = (view: View, workspace: string) => {
   const params = new URLSearchParams();
+  if (workspace && workspace !== "default") {
+    params.set("w", workspace);
+  }
   if (view.kind === "collection") {
     params.set("c", view.id);
-  } else if (view.kind === "shared") {
-    params.set("view", "shared");
+  } else if (view.kind !== "recent") {
+    params.set("view", view.kind);
   }
   const query = params.toString();
   window.history.replaceState(null, "", query ? `/?${query}` : "/");
@@ -100,10 +124,12 @@ const SceneCard = ({
   scene,
   showCollection,
   onAction,
+  snippet,
 }: {
   scene: SceneSummary;
   showCollection: boolean;
   onAction: (kind: Modal["kind"], scene: SceneSummary) => void;
+  snippet?: SearchResult["snippet"];
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -162,6 +188,14 @@ const SceneCard = ({
           Geändert {formatRelative(scene.updatedAt)}
           {scene.updatedBy ? ` von ${scene.updatedBy}` : ""}
         </div>
+        {snippet && (
+          <p className="ws-card__snippet">
+            <span className="ws-card__snippet-kind">
+              {snippet.kind === "comment" ? "Kommentar" : "Text"}
+            </span>
+            {snippet.text}
+          </p>
+        )}
         <div className="ws-card__tags">
           {showCollection && scene.collection && (
             <span className="ws-tag">{scene.collection.name}</span>
@@ -246,9 +280,12 @@ const SceneCard = ({
 
 export const Dashboard = () => {
   const user = getCurrentUser();
+  const branding = useBranding();
+  const [workspaceSlug, setWorkspaceSlug] = useState(readWorkspaceFromUrl);
   const [view, setView] = useState<View>(readViewFromUrl);
-  const [collections, setCollections] = useState<CollectionInfo[] | null>(null);
+  const [overview, setOverview] = useState<WorkspaceOverview | null>(null);
   const [scenes, setScenes] = useState<SceneSummary[] | null>(null);
+  const [results, setResults] = useState<SearchResult[] | null>(null);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SceneSort>("updated");
   const [modal, setModal] = useState<Modal | null>(null);
@@ -256,9 +293,15 @@ export const Dashboard = () => {
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const collections = overview?.collections || null;
+  const workspace = overview?.workspace || null;
+  // "default" is the slug of the default workspace
+  const slug = workspaceSlug || "default";
+  const searching = search.trim().length >= MIN_SEARCH;
+
   useEffect(() => {
-    document.title = "Übersicht · Excalidraw";
-  }, []);
+    document.title = `Übersicht · ${branding.name}`;
+  }, [branding.name]);
 
   const personal = collections?.find((c) => c.kind === "personal") || null;
   const teamCollections = useMemo(
@@ -270,23 +313,32 @@ export const Dashboard = () => {
       ? collections?.find((c) => c.id === view.id) || null
       : null;
 
-  const loadCollections = useCallback(async () => {
+  const isWorkspaceAdmin = workspace?.access === "admin";
+  const isMember = workspace?.access === "member" || isWorkspaceAdmin;
+  const policies = workspace?.policies;
+  const canCreateCollection =
+    isMember && (policies?.collectionCreation !== "admins" || isWorkspaceAdmin);
+  const canExport = !!workspace && (policies?.export || isWorkspaceAdmin);
+
+  const loadOverview = useCallback(async () => {
     try {
-      const { collections } = await workspaceApi.overview();
-      setCollections(collections);
+      setOverview(await workspaceApi.overview(workspaceSlug || undefined));
     } catch (err: any) {
       setError(err.message);
     }
-  }, []);
+  }, [workspaceSlug]);
 
   const loadScenes = useCallback(async () => {
+    if (view.kind === "activity" || view.kind === "trash") {
+      return;
+    }
     try {
       const query =
         view.kind === "collection"
-          ? { collection: view.id, q: search, sort }
+          ? { collection: view.id, sort }
           : view.kind === "shared"
-          ? { view: "shared" as const, q: search, sort }
-          : { view: "recent" as const, q: search };
+          ? { view: "shared" as const, sort, workspace: slug }
+          : { view: "recent" as const, workspace: slug };
       const { scenes } = await workspaceApi.listScenes(query);
       setScenes(scenes);
       setError(null);
@@ -294,16 +346,35 @@ export const Dashboard = () => {
       setError(err.message);
       setScenes([]);
     }
-  }, [view, search, sort]);
+  }, [view, sort, slug]);
+
+  const runSearch = useCallback(async () => {
+    if (!searching) {
+      setResults(null);
+      return;
+    }
+    try {
+      const { results } = await workspaceApi.search(slug, search.trim());
+      setResults(results);
+      setError(null);
+    } catch (err: any) {
+      setError(err.message);
+      setResults([]);
+    }
+  }, [searching, search, slug]);
 
   useEffect(() => {
-    loadCollections();
-  }, [loadCollections]);
+    loadOverview();
+  }, [loadOverview]);
 
   useEffect(() => {
-    const timer = window.setTimeout(loadScenes, search ? 250 : 0);
+    loadScenes();
+  }, [loadScenes]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(runSearch, 250);
     return () => window.clearTimeout(timer);
-  }, [loadScenes, search]);
+  }, [runSearch]);
 
   // keep "who is drawing right now" and new scenes of colleagues fresh
   useEffect(() => {
@@ -323,7 +394,18 @@ export const Dashboard = () => {
   const navigate = (next: View) => {
     setView(next);
     setScenes(null);
-    writeViewToUrl(next);
+    setSearch("");
+    writeViewToUrl(next, slug);
+  };
+
+  const switchWorkspace = (next: string) => {
+    const home: View = { kind: "recent" };
+    setWorkspaceSlug(next);
+    setOverview(null);
+    setView(home);
+    setScenes(null);
+    setSearch("");
+    writeViewToUrl(home, next);
   };
 
   const targetCollectionId = () =>
@@ -338,6 +420,7 @@ export const Dashboard = () => {
     try {
       const { scene } = await workspaceApi.createScene({
         collectionId: targetCollectionId(),
+        workspaceId: workspace?.id,
       });
       window.location.assign(scenePath(scene.id));
     } catch (err: any) {
@@ -370,43 +453,85 @@ export const Dashboard = () => {
   };
 
   const refreshAll = () => {
-    loadCollections();
+    loadOverview();
     loadScenes();
   };
 
-  const title =
-    view.kind === "recent"
-      ? "Zuletzt geöffnet"
-      : view.kind === "shared"
-      ? "Mit mir geteilt"
-      : currentCollection?.name || "Collection";
+  const title = searching
+    ? "Suchergebnisse"
+    : view.kind === "recent"
+    ? "Zuletzt geöffnet"
+    : view.kind === "shared"
+    ? "Mit mir geteilt"
+    : view.kind === "activity"
+    ? "Aktivität"
+    : view.kind === "trash"
+    ? "Papierkorb"
+    : currentCollection?.name || "Collection";
 
-  const subtitle =
-    view.kind === "recent"
-      ? "Szenen, die du zuletzt geöffnet oder angelegt hast."
-      : view.kind === "shared"
-      ? "Szenen, die andere direkt mit dir oder deiner Gruppe geteilt haben."
-      : currentCollection?.kind === "personal"
-      ? "Nur für dich, außer du teilst einzelne Szenen."
-      : "Alle mit Zugriff auf die Collection sehen diese Szenen.";
+  const subtitle = searching
+    ? `Namen, Texte in Zeichnungen und Kommentare in „${
+        workspace?.name || "Workspace"
+      }“, soweit du sie sehen darfst.`
+    : view.kind === "recent"
+    ? "Szenen, die du zuletzt geöffnet oder angelegt hast."
+    : view.kind === "shared"
+    ? "Szenen, die andere direkt mit dir oder deiner Gruppe geteilt haben."
+    : view.kind === "activity"
+    ? "Was in Szenen und Collections passiert ist, die du sehen kannst."
+    : view.kind === "trash"
+    ? `Gelöschte Szenen bleiben ${
+        policies?.trashRetentionDays ?? 30
+      } Tage hier, dann werden sie endgültig gelöscht.`
+    : currentCollection?.kind === "personal"
+    ? "Nur für dich, außer du teilst einzelne Szenen."
+    : "Alle mit Zugriff auf die Collection sehen diese Szenen.";
 
+  const isSceneList =
+    !searching && view.kind !== "activity" && view.kind !== "trash";
   const canCreateHere =
-    view.kind !== "collection" ||
-    currentCollection?.role === "editor" ||
-    currentCollection?.role === "manager";
+    isSceneList &&
+    (view.kind === "collection"
+      ? currentCollection?.role === "editor" ||
+        currentCollection?.role === "manager"
+      : !!personal);
+  const logo = logoUrl(branding);
+  const showAdmin = !!user?.isAdmin || isWorkspaceAdmin;
+
+  const navItem = (target: View, label: string, count?: number) => (
+    <button
+      type="button"
+      className={clsx(
+        "ws-nav-item",
+        !searching &&
+          view.kind === target.kind &&
+          (target.kind !== "collection" ||
+            (view.kind === "collection" && view.id === target.id)) &&
+          "is-active",
+      )}
+      onClick={() => navigate(target)}
+    >
+      <span className="ws-nav-item__label">{label}</span>
+      {count !== undefined && (
+        <span className="ws-nav-item__count">{count}</span>
+      )}
+    </button>
+  );
 
   return (
     <div className="ws-theme ws-dashboard">
       <header className="ws-header">
         <a className="ws-brand" href="/">
-          <span className="ws-brand__logo">{brandMark}</span>
-          Excalidraw
+          <span className="ws-brand__logo">
+            {logo ? <img src={logo} alt="" /> : brandMark}
+          </span>
+          {branding.name}
         </a>
         <div className="ws-header__search">
           <input
             className="ws-input"
             type="search"
-            placeholder="Szenen suchen …"
+            placeholder={`In „${workspace?.name || "Workspace"}“ suchen …`}
             aria-label="Szenen suchen"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
@@ -438,53 +563,47 @@ export const Dashboard = () => {
 
       <div className="ws-layout">
         <nav className="ws-sidebar" aria-label="Bereiche">
-          <button
-            type="button"
-            className={clsx(
-              "ws-nav-item",
-              view.kind === "recent" && "is-active",
-            )}
-            onClick={() => navigate({ kind: "recent" })}
-          >
-            Zuletzt geöffnet
-          </button>
-          {personal && (
-            <button
-              type="button"
-              className={clsx(
-                "ws-nav-item",
-                view.kind === "collection" &&
-                  view.id === personal.id &&
-                  "is-active",
-              )}
-              onClick={() => navigate({ kind: "collection", id: personal.id })}
-            >
-              Meine Szenen
-              <span className="ws-nav-item__count">{personal.sceneCount}</span>
-            </button>
+          {overview && overview.workspaces.length > 1 && (
+            <label className="ws-workspace-switch">
+              <span className="ws-visually-hidden">Workspace</span>
+              <select
+                className="ws-input"
+                aria-label="Workspace"
+                value={slug}
+                onChange={(event) => switchWorkspace(event.target.value)}
+              >
+                {overview.workspaces.map((item) => (
+                  <option key={item.id} value={item.slug}>
+                    {item.name}
+                    {item.access === "guest" ? " (geteilt)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
-          <button
-            type="button"
-            className={clsx(
-              "ws-nav-item",
-              view.kind === "shared" && "is-active",
+          {navItem({ kind: "recent" }, "Zuletzt geöffnet")}
+          {personal &&
+            navItem(
+              { kind: "collection", id: personal.id },
+              "Meine Szenen",
+              personal.sceneCount,
             )}
-            onClick={() => navigate({ kind: "shared" })}
-          >
-            Mit mir geteilt
-          </button>
+          {navItem({ kind: "shared" }, "Mit mir geteilt")}
+          {navItem({ kind: "activity" }, "Aktivität")}
 
           <div className="ws-sidebar__heading">
             <span>Collections</span>
-            <button
-              type="button"
-              className="ws-icon-button"
-              aria-label="Neue Collection"
-              title="Neue Collection"
-              onClick={() => setModal({ kind: "newCollection" })}
-            >
-              +
-            </button>
+            {canCreateCollection && (
+              <button
+                type="button"
+                className="ws-icon-button"
+                aria-label="Neue Collection"
+                title="Neue Collection"
+                onClick={() => setModal({ kind: "newCollection" })}
+              >
+                +
+              </button>
+            )}
           </div>
           {teamCollections.length === 0 && (
             <p className="ws-sidebar__empty">
@@ -492,25 +611,49 @@ export const Dashboard = () => {
             </p>
           )}
           {teamCollections.map((collection) => (
-            <button
-              key={collection.id}
-              type="button"
-              className={clsx(
-                "ws-nav-item",
-                view.kind === "collection" &&
-                  view.id === collection.id &&
-                  "is-active",
+            <Fragment key={collection.id}>
+              {navItem(
+                { kind: "collection", id: collection.id },
+                collection.name,
+                collection.sceneCount,
               )}
-              onClick={() =>
-                navigate({ kind: "collection", id: collection.id })
-              }
-            >
-              <span className="ws-nav-item__label">{collection.name}</span>
-              <span className="ws-nav-item__count">
-                {collection.sceneCount}
-              </span>
-            </button>
+            </Fragment>
           ))}
+
+          <div className="ws-sidebar__footer">
+            {navItem({ kind: "trash" }, "Papierkorb")}
+            {canExport && (
+              <a
+                className="ws-nav-item"
+                href={workspaceApi.exportUrl(slug)}
+                download
+                title="Alle Szenen, die du hier sehen kannst, als ZIP mit .excalidraw-Dateien"
+              >
+                <span className="ws-nav-item__label">Alles exportieren</span>
+              </a>
+            )}
+            {showAdmin && (
+              <a className="ws-nav-item" href={ADMIN_PATH}>
+                <span className="ws-nav-item__label">Verwaltung</span>
+              </a>
+            )}
+            {branding.links.length > 0 && (
+              <ul className="ws-sidebar__links">
+                {branding.links.map((link) => (
+                  <li key={link.url}>
+                    <a
+                      className="ws-link"
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {link.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </nav>
 
         <main className="ws-main">
@@ -520,7 +663,12 @@ export const Dashboard = () => {
               <p className="ws-muted">{subtitle}</p>
             </div>
             <div className="ws-main__actions">
-              {currentCollection?.kind === "team" && (
+              {searching && (
+                <Button variant="ghost" onClick={() => setSearch("")}>
+                  Suche zurücksetzen
+                </Button>
+              )}
+              {isSceneList && currentCollection?.kind === "team" && (
                 <>
                   <Button
                     onClick={() =>
@@ -561,7 +709,16 @@ export const Dashboard = () => {
                   )}
                 </>
               )}
-              {view.kind !== "recent" && (
+              {isSceneList && currentCollection && canExport && (
+                <a
+                  className="ws-button ws-button--ghost"
+                  href={workspaceApi.exportUrl(slug, currentCollection.id)}
+                  download
+                >
+                  Exportieren
+                </a>
+              )}
+              {isSceneList && view.kind !== "recent" && (
                 <select
                   className="ws-input ws-sort"
                   aria-label="Sortierung"
@@ -608,25 +765,55 @@ export const Dashboard = () => {
 
           {error && <Notice kind="error">{error}</Notice>}
 
-          {scenes === null ? (
+          {searching ? (
+            results === null ? (
+              <p className="ws-muted">Suche …</p>
+            ) : results.length === 0 ? (
+              <div className="ws-empty">
+                <h2>Nichts gefunden</h2>
+                <p className="ws-muted">
+                  Gesucht wird nach Wortanfängen, z. B. findet „Urlaub“ auch
+                  „Urlaubsantrag“. Alle Wörter müssen vorkommen.
+                </p>
+              </div>
+            ) : (
+              <section className="ws-grid" aria-label="Suchergebnisse">
+                {results.map((scene) => (
+                  <SceneCard
+                    key={scene.id}
+                    scene={scene}
+                    showCollection
+                    snippet={scene.snippet}
+                    onAction={(kind, target) =>
+                      setModal({ kind, scene: target } as Modal)
+                    }
+                  />
+                ))}
+              </section>
+            )
+          ) : view.kind === "activity" ? (
+            <ActivityFeed workspace={slug} />
+          ) : view.kind === "trash" ? (
+            <TrashView
+              workspace={slug}
+              retentionDays={policies?.trashRetentionDays ?? 30}
+              onChanged={refreshAll}
+            />
+          ) : scenes === null ? (
             <p className="ws-muted">Lade …</p>
           ) : scenes.length === 0 ? (
             <div className="ws-empty">
               <h2>
-                {search
-                  ? "Keine Szene gefunden"
-                  : view.kind === "shared"
+                {view.kind === "shared"
                   ? "Noch nichts geteilt"
                   : "Noch keine Szenen"}
               </h2>
               <p className="ws-muted">
-                {search
-                  ? "Versuche einen anderen Suchbegriff."
-                  : view.kind === "shared"
+                {view.kind === "shared"
                   ? "Wenn jemand eine Szene mit dir teilt, erscheint sie hier."
                   : "Lege eine neue Szene an oder importiere eine .excalidraw-Datei."}
               </p>
-              {canCreateHere && view.kind !== "shared" && !search && (
+              {canCreateHere && view.kind !== "shared" && (
                 <Button variant="primary" disabled={busy} onClick={createScene}>
                   Neue Szene
                 </Button>
@@ -656,8 +843,11 @@ export const Dashboard = () => {
           submitLabel="Anlegen"
           onClose={() => setModal(null)}
           onSubmit={async (name) => {
-            const created = await workspaceApi.createCollection(name);
-            await loadCollections();
+            const created = await workspaceApi.createCollection(
+              name,
+              workspace?.id,
+            );
+            await loadOverview();
             navigate({ kind: "collection", id: created.id });
           }}
         />
@@ -683,7 +873,7 @@ export const Dashboard = () => {
           onClose={() => setModal(null)}
           onConfirm={async () => {
             await workspaceApi.deleteCollection(modal.collection.id);
-            await loadCollections();
+            await loadOverview();
             navigate({ kind: "recent" });
           }}
         />
@@ -707,6 +897,7 @@ export const Dashboard = () => {
           onSubmit={async (name) => {
             await workspaceApi.updateScene(modal.scene.id, { name });
             loadScenes();
+            runSearch();
           }}
         />
       )}
@@ -735,12 +926,17 @@ export const Dashboard = () => {
       {modal?.kind === "deleteScene" && (
         <ConfirmDialog
           title="Szene löschen"
-          text={`„${modal.scene.name}“ wird für alle gelöscht, die Zugriff haben.`}
-          confirmLabel="Löschen"
+          text={`„${
+            modal.scene.name
+          }“ kommt in den Papierkorb und ist für alle mit Zugriff weg. ${
+            policies?.trashRetentionDays ?? 30
+          } Tage lang lässt sie sich dort wiederherstellen.`}
+          confirmLabel="In den Papierkorb"
           onClose={() => setModal(null)}
           onConfirm={async () => {
             await workspaceApi.deleteScene(modal.scene.id);
             refreshAll();
+            runSearch();
           }}
         />
       )}

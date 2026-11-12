@@ -37,6 +37,15 @@ const renderDashboard = async () => {
   );
 };
 
+const renderAdmin = async () => {
+  const { AdminPage } = await import("./workspace/admin/AdminPage");
+  root.render(
+    <StrictMode>
+      <AdminPage />
+    </StrictMode>,
+  );
+};
+
 const dashboardLink = { href: "/", label: "Zur Übersicht" };
 
 const start = async () => {
@@ -73,6 +82,11 @@ const start = async () => {
       );
     }
     return;
+  }
+
+  if (route.kind === "admin") {
+    // the server decides what each admin may see; others get the dashboard
+    return renderAdmin();
   }
 
   if (route.kind === "scene") {

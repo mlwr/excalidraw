@@ -53,10 +53,69 @@ export interface DirectoryResult {
   groups: string[];
 }
 
-export type SceneListQuery =
+export type SceneListQuery = (
   | { view: "recent"; q?: string }
   | { view: "shared"; q?: string; sort?: SceneSort }
-  | { collection: string; q?: string; sort?: SceneSort };
+  | { collection: string; q?: string; sort?: SceneSort }
+) & { workspace?: string };
+
+export interface WorkspacePolicies {
+  readLinks: boolean;
+  directSharing: boolean;
+  collectionCreation: "members" | "admins";
+  export: boolean;
+  trashRetentionDays: number;
+}
+
+/** guest: sees only what was shared with them in this workspace */
+export type WorkspaceAccess = "guest" | "member" | "admin";
+
+export interface WorkspaceInfo {
+  id: string;
+  slug: string;
+  name: string;
+  access: WorkspaceAccess;
+}
+
+export interface WorkspaceOverview {
+  workspace: WorkspaceInfo & { policies: WorkspacePolicies };
+  workspaces: WorkspaceInfo[];
+  collections: CollectionInfo[];
+}
+
+export interface TrashedScene extends SceneSummary {
+  deletedAt: string;
+  deletedBy: string | null;
+  purgeAt: string;
+}
+
+export interface SearchResult extends SceneSummary {
+  /** where the words occur: a text of the drawing or a comment */
+  snippet: { kind: "drawing" | "comment"; text: string } | null;
+}
+
+export interface ActivityEvent {
+  id: string;
+  at: string;
+  type: string;
+  actor: Person | null;
+  scene: { id: string; name: string | null; available: boolean } | null;
+  collectionId: string | null;
+  details: {
+    name?: string;
+    before?: string;
+    count?: number;
+    via?: string;
+  };
+}
+
+export interface VersionInfo {
+  id: string;
+  savedAt: string;
+  savedBy: string | null;
+  size: number;
+  reason: "auto" | "restore" | "import";
+}
 
 export type SceneSort = "updated" | "created" | "name";
 
@@ -129,9 +188,13 @@ const send = (method: string, path: string, body?: unknown) =>
   });
 
 export const workspaceApi = {
-  overview: async () =>
-    json<{ collections: CollectionInfo[] }>(
-      await backendFetch("/api/workspace"),
+  overview: async (workspace?: string) =>
+    json<WorkspaceOverview>(
+      await backendFetch(
+        `/api/workspace${
+          workspace ? `?workspace=${encodeURIComponent(workspace)}` : ""
+        }`,
+      ),
     ),
 
   listScenes: async (query: SceneListQuery) => {
@@ -147,12 +210,19 @@ export const workspaceApi = {
     if ("sort" in query && query.sort) {
       params.set("sort", query.sort);
     }
+    if (query.workspace) {
+      params.set("workspace", query.workspace);
+    }
     return json<{ scenes: SceneSummary[] }>(
       await backendFetch(`/api/scenes?${params}`),
     );
   },
 
-  createScene: async (input: { name?: string; collectionId?: string }) =>
+  createScene: async (input: {
+    name?: string;
+    collectionId?: string;
+    workspaceId?: string;
+  }) =>
     json<{ scene: SceneSummary; key: string }>(
       await send("POST", "/api/scenes", input),
     ),
@@ -185,6 +255,7 @@ export const workspaceApi = {
       canManage: boolean;
       collection: { id: string; name: string; kind: "personal" | "team" };
       readLinkUrl: string | null;
+      policies: { readLinks: boolean; directSharing: boolean };
     }>(await backendFetch(`/api/scenes/${encodeURIComponent(sceneId)}/grants`)),
 
   setSceneGrants: async (sceneId: string, grants: Omit<Grant, "label">[]) =>
@@ -215,8 +286,10 @@ export const workspaceApi = {
       await backendFetch(`/api/read-links/${encodeURIComponent(token)}`),
     ),
 
-  createCollection: async (name: string) =>
-    json<CollectionInfo>(await send("POST", "/api/collections", { name })),
+  createCollection: async (name: string, workspaceId?: string) =>
+    json<CollectionInfo>(
+      await send("POST", "/api/collections", { name, workspaceId }),
+    ),
 
   renameCollection: async (collectionId: string, name: string) =>
     json<{ id: string; name: string }>(
@@ -316,6 +389,77 @@ export const workspaceApi = {
   deleteComment: async (commentId: string) =>
     json<void>(
       await send("DELETE", `/api/comments/${encodeURIComponent(commentId)}`),
+    ),
+
+  // --- phase 4: trash, activity, search, export, versions ---------------
+
+  trash: async (workspace: string) =>
+    json<{ scenes: TrashedScene[] }>(
+      await backendFetch(
+        `/api/scenes?view=trash&workspace=${encodeURIComponent(workspace)}`,
+      ),
+    ),
+
+  restoreScene: async (sceneId: string) =>
+    json<{ scene: SceneSummary }>(
+      await send("POST", `/api/scenes/${encodeURIComponent(sceneId)}/restore`),
+    ),
+
+  purgeScene: async (sceneId: string) =>
+    json<void>(
+      await send("DELETE", `/api/scenes/${encodeURIComponent(sceneId)}/purge`),
+    ),
+
+  activity: async (workspace: string, before?: string) =>
+    json<{ events: ActivityEvent[]; next: string | null }>(
+      await backendFetch(
+        `/api/activity?workspace=${encodeURIComponent(workspace)}${
+          before ? `&before=${encodeURIComponent(before)}` : ""
+        }`,
+      ),
+    ),
+
+  search: async (workspace: string, q: string) =>
+    json<{ total: number; results: SearchResult[] }>(
+      await backendFetch(
+        `/api/search?workspace=${encodeURIComponent(
+          workspace,
+        )}&q=${encodeURIComponent(q)}`,
+      ),
+    ),
+
+  /** download link (GET with the session cookie) */
+  exportUrl: (workspace: string, collectionId?: string) =>
+    `/api/export?workspace=${encodeURIComponent(workspace)}${
+      collectionId ? `&collection=${encodeURIComponent(collectionId)}` : ""
+    }`,
+
+  versions: async (sceneId: string) =>
+    json<{
+      current: { savedAt: string; savedBy: string | null; revision: number };
+      versions: VersionInfo[];
+      canRestore: boolean;
+    }>(
+      await backendFetch(`/api/scenes/${encodeURIComponent(sceneId)}/versions`),
+    ),
+
+  version: async (sceneId: string, versionId: string) =>
+    json<{ id: string; savedAt: string; iv: string; ciphertext: string }>(
+      await backendFetch(
+        `/api/scenes/${encodeURIComponent(
+          sceneId,
+        )}/versions/${encodeURIComponent(versionId)}`,
+      ),
+    ),
+
+  restoreVersion: async (sceneId: string, versionId: string) =>
+    json<{ revision: number }>(
+      await send(
+        "POST",
+        `/api/scenes/${encodeURIComponent(
+          sceneId,
+        )}/versions/${encodeURIComponent(versionId)}/restore`,
+      ),
     ),
 
   directory: async (q: string) =>

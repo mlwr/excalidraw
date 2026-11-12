@@ -1,6 +1,7 @@
 import {
   ExportIcon,
   eyeIcon,
+  historyIcon,
   LibraryIcon,
   loginIcon,
 } from "@excalidraw/excalidraw/components/icons";
@@ -15,6 +16,7 @@ import { LanguageList } from "../app-language/LanguageList";
 import { getCurrentUser, logout } from "../intranet/session";
 import { appJotaiStore } from "../app-jotai";
 import { saveToWorkspaceOpenAtom } from "../workspace/SaveToWorkspaceDialog";
+import { versionsOpenAtom } from "../workspace/VersionsDialog";
 
 import { saveDebugState } from "./DebugCanvas";
 
@@ -41,6 +43,14 @@ export const AppMainMenu: React.FC<{
               onSelect={() => appJotaiStore.set(saveToWorkspaceOpenAtom, true)}
             >
               Im Workspace speichern…
+            </MainMenu.Item>
+          )}
+          {props.isWorkspaceScene && (
+            <MainMenu.Item
+              icon={historyIcon}
+              onSelect={() => appJotaiStore.set(versionsOpenAtom, true)}
+            >
+              Versionsverlauf…
             </MainMenu.Item>
           )}
           <MainMenu.Separator />

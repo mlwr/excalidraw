@@ -5,15 +5,18 @@
  *   /local       editor with a drawing stored only in this browser
  *   /s/<id>      editor with a workspace scene
  *   /v/<token>   read-only link, resolved to /s/<id>
+ *   /admin       administration (app and workspace admins)
  */
 
 export type AppRoute =
   | { kind: "dashboard" }
   | { kind: "local" }
   | { kind: "scene"; sceneId: string }
-  | { kind: "readLink"; token: string };
+  | { kind: "readLink"; token: string }
+  | { kind: "admin" };
 
 export const LOCAL_EDITOR_PATH = "/local";
+export const ADMIN_PATH = "/admin";
 
 export const scenePath = (sceneId: string) =>
   `/s/${encodeURIComponent(sceneId)}`;
@@ -31,6 +34,9 @@ export const getRoute = (location: Location = window.location): AppRoute => {
   }
   if (path === LOCAL_EDITOR_PATH) {
     return { kind: "local" };
+  }
+  if (path === ADMIN_PATH) {
+    return { kind: "admin" };
   }
   // upstream links (live sessions, share links, library installs) open the
   // editor at the root path

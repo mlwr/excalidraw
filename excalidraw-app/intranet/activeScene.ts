@@ -2,6 +2,7 @@
  * Intranet fork: the workspace scene opened in the editor (route /s/<id>).
  * Kept free of editor imports so the start page loads without the editor.
  */
+import { loadBranding } from "./branding";
 import { sceneRoomId, setRoomReadOnly } from "./sceneRoom";
 
 import type { OpenedScene } from "./workspaceApi";
@@ -16,6 +17,11 @@ export const setActiveScene = (scene: ActiveScene) => {
   activeScene = scene;
   setRoomReadOnly(sceneRoomId(scene.id), scene.role === "viewer");
   document.title = `${scene.name} · Excalidraw`;
+  loadBranding().then((branding) => {
+    if (activeScene?.id === scene.id) {
+      document.title = `${scene.name} · ${branding.name}`;
+    }
+  });
 };
 
 /** room data for the collaboration layer */

@@ -33,6 +33,7 @@ export const SceneShareContent = ({
         canManage: boolean;
         collection: { name: string; kind: "personal" | "team" };
         readLinkUrl: string | null;
+        policies: { readLinks: boolean; directSharing: boolean };
       }
   >({ status: "loading" });
   const [saving, setSaving] = useState(false);
@@ -69,6 +70,9 @@ export const SceneShareContent = ({
       setMessage(error.message);
     }
   };
+
+  // the workspace's policies (T5) may switch sharing off
+  const canShare = state.canManage && state.policies.directSharing;
 
   const save = async () => {
     setSaving(true);
@@ -126,18 +130,25 @@ export const SceneShareContent = ({
         <AccessEditor
           grants={state.grants}
           roles={["viewer", "editor"]}
-          disabled={!state.canManage}
+          disabled={!canShare}
           onChange={(grants) => setState({ ...state, grants })}
         />
-        {!state.canManage && (
+        {!state.canManage ? (
           <Notice>
             Teilen dürfen nur Personen mit Bearbeitungsrechten an der
             Collection.
           </Notice>
+        ) : (
+          !state.policies.directSharing && (
+            <Notice>
+              In diesem Workspace ist das Teilen einzelner Szenen abgeschaltet.
+              Zugriff gibt es über die Collection.
+            </Notice>
+          )
         )}
       </section>
 
-      {state.canManage && (
+      {state.canManage && state.policies.readLinks && (
         <section>
           <h3>Nur-Lese-Link</h3>
           <label className="ws-toggle">
@@ -177,10 +188,8 @@ export const SceneShareContent = ({
       {message && <Notice>{message}</Notice>}
 
       <div className="ws-dialog__actions">
-        <Button onClick={onDone}>
-          {state.canManage ? "Abbrechen" : "Schließen"}
-        </Button>
-        {state.canManage && (
+        <Button onClick={onDone}>{canShare ? "Abbrechen" : "Schließen"}</Button>
+        {canShare && (
           <Button variant="primary" disabled={saving} onClick={save}>
             {saving ? "Speichert …" : "Speichern"}
           </Button>

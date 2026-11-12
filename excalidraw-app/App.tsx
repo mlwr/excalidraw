@@ -146,6 +146,7 @@ import { SaveToWorkspaceDialog } from "./workspace/SaveToWorkspaceDialog";
 import { SceneShareDialog } from "./workspace/SceneShareDialog";
 import { CommentsButton } from "./workspace/comments/CommentsButton";
 import { CommentsLayer } from "./workspace/comments/CommentsLayer";
+import { VersionsDialog } from "./workspace/VersionsDialog";
 
 import "./index.scss";
 
@@ -1049,6 +1050,9 @@ const ExcalidrawWrapper = () => {
         )}
 
         {activeScene && <CommentsLayer scene={activeScene} />}
+        {activeScene && excalidrawAPI && (
+          <VersionsDialog scene={activeScene} excalidrawAPI={excalidrawAPI} />
+        )}
 
         {activeScene ? (
           <SceneShareDialog scene={activeScene} />

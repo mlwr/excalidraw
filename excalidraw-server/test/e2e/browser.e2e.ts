@@ -546,6 +546,169 @@ describeE2E("browser end-to-end", () => {
     expect(pageErrors).toEqual([]);
   }, 180000);
 
+  it("finds, restores and administers: search, versions, trash, activity, admin", async () => {
+    const shot = async (page: Page, name: string) => {
+      if (process.env.E2E_SCREENSHOT_DIR) {
+        await page.screenshot({
+          path: `${process.env.E2E_SCREENSHOT_DIR}/${name}.png`,
+        });
+      }
+    };
+
+    // --- scenes with text, made through the REST API ---------------------------
+    const cookie = await env.login(bob);
+    const created = await env.built.app.inject({
+      method: "POST",
+      url: "/api/tokens",
+      headers: { cookie, origin: APP_URL },
+      payload: { name: "E2E Phase 4", scope: "write", expiresInDays: 7 },
+    });
+    const { token } = created.json();
+    const api = async (method: string, url: string, payload?: unknown) => {
+      const response = await env.built.app.inject({
+        method: method as "GET",
+        url: `/api/v1${url}`,
+        headers: { authorization: `Bearer ${token}` },
+        ...(payload ? { payload: payload as Record<string, unknown> } : {}),
+      });
+      expect(response.statusCode).toBeLessThan(300);
+      return response.body ? response.json() : null;
+    };
+    const { scene: plan } = await api("POST", "/scenes", {
+      name: "Urlaubsplanung",
+      elements: [
+        {
+          type: "rectangle",
+          id: "a",
+          x: 100,
+          y: 100,
+          width: 300,
+          height: 100,
+          label: { text: "Urlaubsantrag stellen" },
+        },
+      ],
+    });
+    // a save after the version interval keeps the earlier state
+    await api("PATCH", `/scenes/${plan.id}/elements`, {
+      updates: [{ id: "a", text: "Urlaubsantrag genehmigt" }],
+    });
+    const { scene: scrap } = await api("POST", "/scenes", { name: "Entwurf" });
+    await env.built.jobs.run("search");
+
+    // --- search over drawn texts ------------------------------------------------
+    env.oidc.setUser(bob);
+    const bobContext = await newContext();
+    const dashboard = await openDashboard(bobContext);
+    // Bob is no admin: no administration for him
+    expect(await dashboard.locator("a[href='/admin']").count()).toBe(0);
+    await dashboard.fill("input[aria-label='Szenen suchen']", "urlaubsantr");
+    await dashboard.waitForSelector(
+      ".ws-card__snippet:has-text('Urlaubsantrag genehmigt')",
+    );
+    await shot(dashboard, "search");
+    await dashboard.getByRole("button", { name: "Suche zurücksetzen" }).click();
+
+    // --- trash: delete, restore, delete for good --------------------------------
+    await dashboard.click(".ws-sidebar >> text=Meine Szenen");
+    const card = dashboard.locator(".ws-card", { hasText: "Entwurf" });
+    await card.locator(".ws-card__menu button").click();
+    await card.getByRole("menuitem", { name: "Löschen" }).click();
+    await dashboard.click(".ws-dialog__footer .ws-button--danger");
+    await dashboard.waitForSelector(".ws-dialog", { state: "detached" });
+    await dashboard.click(".ws-sidebar >> text=Papierkorb");
+    const row = dashboard.locator(".ws-trash tbody tr", { hasText: "Entwurf" });
+    await row.waitFor();
+    await row.getByRole("button", { name: "Wiederherstellen" }).click();
+    await dashboard.waitForSelector(".ws-notice:has-text('Meine Szenen')");
+    expect((await api("GET", `/scenes/${scrap.id}`)).scene.name).toBe(
+      "Entwurf",
+    );
+    await api("DELETE", `/scenes/${scrap.id}`);
+    await dashboard.click(".ws-sidebar >> text=Aktivität");
+    await dashboard.click(".ws-sidebar >> text=Papierkorb");
+    await row.getByRole("button", { name: "Endgültig löschen" }).click();
+    await dashboard.click(".ws-dialog__footer .ws-button--danger");
+    await dashboard.waitForSelector("text=Der Papierkorb ist leer");
+
+    // --- activity feed ------------------------------------------------------------
+    await dashboard.click(".ws-sidebar >> text=Aktivität");
+    await dashboard.waitForSelector(
+      ".ws-feed__item:has-text('hat „Urlaubsplanung“ angelegt')",
+    );
+    await shot(dashboard, "activity");
+
+    // --- version history in the editor ---------------------------------------------
+    const editor = await bobContext.newPage();
+    await editor.goto(`${APP_URL}/s/${plan.id}`);
+    await editor.waitForSelector(".excalidraw .collab-button", {
+      timeout: 30000,
+    });
+    await editor.click("[data-testid='main-menu-trigger']");
+    await editor.getByText("Versionsverlauf…").click();
+    const versions = editor.locator(".ws-versions__item");
+    await expect.poll(() => versions.count()).toBe(2);
+    await versions.nth(1).click();
+    await editor.waitForSelector(".ws-versions__svg svg");
+    await shot(editor, "versions");
+    await editor
+      .getByRole("button", { name: "Diese Version wiederherstellen" })
+      .click();
+    await editor.getByRole("button", { name: "Ja, wiederherstellen" }).click();
+    await editor.waitForSelector(".ws-notice:has-text('wiederhergestellt')");
+    const content = await api("GET", `/scenes/${plan.id}/content`);
+    expect(
+      content.elements
+        .filter((el: { type: string }) => el.type === "text")
+        .map((el: { text: string }) => el.text),
+    ).toEqual(["Urlaubsantrag stellen"]);
+
+    // --- administration: a workspace with policies, branding, audit log ----------
+    env.oidc.setUser(alice);
+    const adminContext = await newContext();
+    const admin = await adminContext.newPage();
+    await admin.goto(`${APP_URL}/admin`);
+    await admin.waitForSelector(".ws-admin h1:has-text('Workspaces')", {
+      timeout: 30000,
+    });
+    await admin.getByRole("button", { name: "Neuer Workspace" }).click();
+    await admin.fill(".ws-dialog input", "Vertrieb");
+    await admin.click(".ws-dialog__footer .ws-button--primary");
+    await admin.waitForSelector(".ws-admin__card h3:has-text('Vertrieb')");
+    await admin
+      .getByLabel("Nur-Lese-Links erlaubt", { exact: false })
+      .uncheck();
+    await admin.getByRole("button", { name: "Richtlinien speichern" }).click();
+    await admin.waitForSelector(
+      ".ws-notice:has-text('Richtlinien gespeichert')",
+    );
+    await shot(admin, "admin-workspaces");
+
+    await admin.click(".ws-sidebar >> text=Branding");
+    await admin.fill(".ws-field input >> nth=0", "Zeichenbrett");
+    await admin.getByRole("button", { name: "Speichern", exact: true }).click();
+    await admin.waitForSelector(".ws-notice:has-text('Gespeichert')");
+
+    await admin.click(".ws-sidebar >> text=Audit-Log");
+    await admin.waitForSelector(
+      ".ws-admin__table td:has-text('Workspace angelegt')",
+    );
+    await shot(admin, "admin-audit");
+
+    // the dashboard carries the branding and offers both workspaces
+    const branded = await openDashboard(adminContext);
+    await branded.waitForSelector(".ws-brand:has-text('Zeichenbrett')");
+    await branded.selectOption("select[aria-label='Workspace']", "vertrieb");
+    await branded.waitForURL(/\?w=vertrieb/);
+    await branded.waitForSelector(
+      "input[placeholder='In „Vertrieb“ suchen …']",
+    );
+    expect(await branded.locator("a[href='/admin']").count()).toBe(1);
+
+    expect(external).toEqual([]);
+    expect(cspViolations).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  }, 180000);
+
   it("saves a drawing from the local editor into the workspace", async () => {
     env.oidc.setUser(bob);
     const context = await newContext();

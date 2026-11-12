@@ -17,11 +17,14 @@ export const AccessEditor = ({
   onChange,
   roles,
   disabled,
+  labels = ROLE_LABELS,
 }: {
   grants: Grant[];
   onChange: (grants: Grant[]) => void;
   roles: GrantRole[];
   disabled?: boolean;
+  /** names of the roles (workspace members use other words) */
+  labels?: Record<GrantRole, string>;
 }) => {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<DirectoryResult>({
@@ -131,7 +134,7 @@ export const AccessEditor = ({
           >
             {roles.map((role) => (
               <option key={role} value={role}>
-                {ROLE_LABELS[role]}
+                {labels[role]}
               </option>
             ))}
           </select>
@@ -170,7 +173,7 @@ export const AccessEditor = ({
               >
                 {roles.map((role) => (
                   <option key={role} value={role}>
-                    {ROLE_LABELS[role]}
+                    {labels[role]}
                   </option>
                 ))}
               </select>
