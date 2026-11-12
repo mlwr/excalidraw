@@ -176,7 +176,7 @@ Alle Einstellungen sind Umgebungsvariablen; das Chart setzt sie aus den Values. 
 - **Verwaltung**: App-Admins (Keycloak-Rolle `excalidraw-admin`) öffnen `/admin` über „Verwaltung“ in der Übersicht: Workspaces mit Mitgliedern und Richtlinien, Personen (sperren, Tokens beenden, entfernen), Audit-Log mit CSV-Download, Branding und Kennzahlen. Workspace-Admins sehen dort nur ihre Workspaces.
 - **Hintergrundaufgaben** laufen in jedem Pod, aber dank PostgreSQL-Advisory-Locks jeweils nur in einem gleichzeitig: Suchindex (alle 20 s), Papierkorb leeren (stündlich), Versionen ausdünnen (stündlich), Fristen für Audit-Log, „Zuletzt geöffnet“, gelöschte Kommentare und abgelaufene Tokens (alle 6 h), abgelaufene Sitzungen (alle 15 min). Löschfristen siehe [Datenschutz](datenschutz.md).
 - **API-Tokens** einer Person beenden: die Person selbst im Dashboard, oder ein App-Admin unter „Verwaltung → Personen“.
-- **Updates**: Image-Tag erhöhen und `helm upgrade`; Migrationen laufen beim Start.
+- **Updates**: Image-Tag erhöhen und `helm upgrade`; Migrationen laufen beim Start. Beim Update auf Phase 4 kommen bisher nur ausgeblendete, gelöschte Szenen in den Papierkorb; ihre Frist (Standard 30 Tage) beginnt mit dem Update.
 
 ### Monitoring
 

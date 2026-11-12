@@ -155,6 +155,48 @@ const guestWorkspaces = async (db: Kysely<Database>, actor: Actor) => {
   return new Set(rows.rows.map((row) => row.workspace_id));
 };
 
+/**
+ * Remove the sharing a workspace's policies forbid: read links (and who
+ * opened them) without readLinks, direct scene grants without
+ * directSharing. For the whole workspace (policy switched off) or some
+ * scenes (moved into it). Returns the scenes whose access changed.
+ */
+export const clearForbiddenSharing = async (
+  db: Kysely<Database>,
+  policies: Pick<WorkspacePolicies, "readLinks" | "directSharing">,
+  scope: { workspaceId: string } | { sceneIds: string[] },
+) => {
+  if ("sceneIds" in scope && !scope.sceneIds.length) {
+    return [];
+  }
+  const inScope = (column: "id" | "scene_id") =>
+    "sceneIds" in scope
+      ? sql`${sql.ref(column)} = any(${scope.sceneIds}::text[])`
+      : column === "id"
+      ? sql`workspace_id = ${scope.workspaceId}`
+      : sql`scene_id in (select id from scenes where workspace_id = ${scope.workspaceId})`;
+  const affected = new Set<string>();
+  if (!policies.readLinks) {
+    const unlinked = await sql<{ id: string }>`
+      update scenes set read_link_token = null
+      where read_link_token is not null and ${inScope("id")}
+      returning id
+    `.execute(db);
+    unlinked.rows.forEach((row) => affected.add(row.id));
+    await sql`delete from scene_link_viewers where ${inScope(
+      "scene_id",
+    )}`.execute(db);
+  }
+  if (!policies.directSharing) {
+    const removed = await sql<{ scene_id: string }>`
+      delete from scene_grants where ${inScope("scene_id")}
+      returning scene_id
+    `.execute(db);
+    removed.rows.forEach((row) => affected.add(row.scene_id));
+  }
+  return [...affected];
+};
+
 export const workspaceAccess = async (
   db: Kysely<Database>,
   actor: Actor,

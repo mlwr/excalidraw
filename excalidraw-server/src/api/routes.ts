@@ -624,7 +624,17 @@ export const registerApiRoutes = (
   /** ZIP of .excalidraw files: a workspace (?workspace) or a collection */
   app.get(
     "/api/v1/export",
-    { ...options, config: { rateLimit: { max: 6, timeWindow: "1 minute" } } },
+    {
+      ...options,
+      // per token, like every API call, but only a few per minute
+      config: {
+        rateLimit: {
+          ...options.config.rateLimit,
+          max: 6,
+          timeWindow: "1 minute",
+        },
+      },
+    },
     async (request, reply) => {
       const query = request.query as Record<string, unknown>;
       const current = actor(request);

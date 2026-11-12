@@ -30,6 +30,7 @@ import {
   encryptElements,
   sceneVersionOf,
 } from "./content.js";
+import { clearForbiddenSharing, policiesOf } from "./workspaces.js";
 
 import type { AppContext } from "../context.js";
 import type { Collection } from "../db/schema.js";
@@ -273,7 +274,8 @@ export const createWorkspaceService = (ctx: AppContext) => {
     if (options.collectionId) {
       accessible = [await collectionFor(actor, options.collectionId, "viewer")];
     } else {
-      await ensurePersonalCollection(actor.id, options.workspaceId);
+      // reading creates nothing: guests of a workspace get no "Meine
+      // Szenen" there by searching or exporting
       accessible = await accessibleCollections(db, actor, options.workspaceId);
     }
     const collectionRoles = new Map(
@@ -291,7 +293,10 @@ export const createWorkspaceService = (ctx: AppContext) => {
         options.collectionId
           ? eb("collection_id", "in", collectionIds)
           : eb.or([
-              eb("collection_id", "in", collectionIds),
+              // guests of a workspace may see no collection there at all
+              ...(collectionIds.length
+                ? [eb("collection_id", "in", collectionIds)]
+                : []),
               eb.exists(
                 eb
                   .selectFrom("scene_grants")
@@ -464,6 +469,22 @@ export const createWorkspaceService = (ctx: AppContext) => {
       .set({ ...changes, updated_at: sql`now()` })
       .where("id", "=", access.scene.id)
       .execute();
+    if (
+      changes.workspace_id &&
+      changes.workspace_id !== access.scene.workspace_id
+    ) {
+      // into another workspace: its policies apply from now on
+      const target = await db
+        .selectFrom("workspaces")
+        .select("settings")
+        .where("id", "=", changes.workspace_id)
+        .executeTakeFirstOrThrow();
+      await clearForbiddenSharing(
+        db,
+        policiesOf(target, { trashRetentionDays: config.retention.trashDays }),
+        { sceneIds: [access.scene.id] },
+      );
+    }
     if (
       changes.collection_id &&
       changes.collection_id !== access.scene.collection_id

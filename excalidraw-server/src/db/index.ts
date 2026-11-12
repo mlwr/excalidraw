@@ -7,6 +7,7 @@ import * as m002 from "./migrations/002_realtime_cluster.js";
 import * as m003 from "./migrations/003_workspace.js";
 import * as m004 from "./migrations/004_api_comments.js";
 import * as m005 from "./migrations/005_operations.js";
+import * as m006 from "./migrations/006_operations_hardening.js";
 
 import type { Database } from "./schema.js";
 import type { Migration } from "kysely/migration";
@@ -39,6 +40,7 @@ const MIGRATIONS: Record<string, Migration> = {
   "003_workspace": m003,
   "004_api_comments": m004,
   "005_operations": m005,
+  "006_operations_hardening": m006,
 };
 
 export const migrateToLatest = async (db: Kysely<Database>) => {

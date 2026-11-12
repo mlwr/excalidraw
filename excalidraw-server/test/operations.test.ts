@@ -332,10 +332,10 @@ describeWithDb("operations (phase 4)", () => {
       "Vierter Entwurf",
     ]);
 
-    // old versions go after VERSION_RETENTION_DAYS
+    // versions go VERSION_RETENTION_DAYS after they were taken
     await db
       .updateTable("scene_versions")
-      .set({ created_at: new Date(Date.now() - 91 * 86400_000) })
+      .set({ taken_at: new Date(Date.now() - 91 * 86400_000) })
       .where("id", "=", oldest.id)
       .execute();
     await env.built.jobs.run("versions");

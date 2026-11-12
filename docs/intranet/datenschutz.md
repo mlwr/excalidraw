@@ -24,7 +24,7 @@ Live-Sitzungen (Mauszeiger, Auswahl) laufen über den Server, werden aber nicht 
 | Frist | Standard | Einstellung |
 | --- | --- | --- |
 | Papierkorb | 30 Tage | je Workspace unter „Verwaltung → Workspaces → Richtlinien“; Vorgabe für neue Workspaces `TRASH_RETENTION_DAYS` |
-| Versionen | 90 Tage, nach zwei Tagen eine pro Tag, höchstens 200 je Szene | `VERSION_RETENTION_DAYS`, `VERSION_INTERVAL_MINUTES` |
+| Versionen | 90 Tage nach der Sicherung, nach zwei Tagen eine pro Tag, höchstens 200 je Szene | `VERSION_RETENTION_DAYS`, `VERSION_INTERVAL_MINUTES` |
 | Gelöschte Kommentare | wie der Papierkorb (`TRASH_RETENTION_DAYS`) | – |
 | Audit-Log | 365 Tage | `AUDIT_RETENTION_DAYS` |
 | „Zuletzt geöffnet“ | 180 Tage | `VISIT_RETENTION_DAYS` |
@@ -50,9 +50,9 @@ Für Personen, die das Unternehmen verlassen, oder auf Antrag (Art. 17 DSGVO): �
 
 Dabei
 
-- übernimmt eine gewählte Nachfolge die persönlichen Szenen („Meine Szenen“) in allen Workspaces; ohne Nachfolge kommen sie in den Papierkorb und werden nach dessen Frist gelöscht,
+- übernimmt eine gewählte Nachfolge die persönlichen Szenen („Meine Szenen“) in allen Workspaces; ohne Nachfolge kommen sie in den Papierkorb und werden nach dessen Frist gelöscht (bis dahin kann die Admin-Person, die entfernt hat, einzelne in ihre eigenen „Meine Szenen“ zurückholen),
 - werden Name, E-Mail, Benutzername, Rollen und Gruppen gelöscht; die Person heißt danach überall „Gelöschte Person“ (in Szenen, Kommentaren, Versionen, Aktivität und Audit-Log),
-- werden IP-Adressen und Browser-Kennungen ihrer Einträge im Audit-Log gelöscht,
+- werden IP-Adressen und Browser-Kennungen ihrer Einträge im Audit-Log gelöscht, ebenso ihr Name in Einträgen über sie (z. B. „Person gesperrt“), die Namen ihrer API-Tokens und ihr Benutzername bei abgelehnten Anmeldungen; die Nachfolge steht dort nur als ID,
 - enden Sitzungen und API-Tokens; Freigaben, Mitgliedschaften und „Zuletzt geöffnet“ werden gelöscht,
 - wird die Verknüpfung mit dem Keycloak-Konto gelöst: meldet sich dasselbe Konto später an, entsteht ein neues, leeres Konto.
 

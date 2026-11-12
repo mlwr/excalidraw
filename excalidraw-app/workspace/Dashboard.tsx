@@ -328,7 +328,13 @@ export const Dashboard = () => {
     }
   }, [workspaceSlug]);
 
+  // only the newest request may show its answer (a slow older one would
+  // overwrite newer results)
+  const scenesRequest = useRef(0);
+  const searchRequest = useRef(0);
+
   const loadScenes = useCallback(async () => {
+    const request = ++scenesRequest.current;
     if (view.kind === "activity" || view.kind === "trash") {
       return;
     }
@@ -340,26 +346,35 @@ export const Dashboard = () => {
           ? { view: "shared" as const, sort, workspace: slug }
           : { view: "recent" as const, workspace: slug };
       const { scenes } = await workspaceApi.listScenes(query);
-      setScenes(scenes);
-      setError(null);
+      if (request === scenesRequest.current) {
+        setScenes(scenes);
+        setError(null);
+      }
     } catch (err: any) {
-      setError(err.message);
-      setScenes([]);
+      if (request === scenesRequest.current) {
+        setError(err.message);
+        setScenes([]);
+      }
     }
   }, [view, sort, slug]);
 
   const runSearch = useCallback(async () => {
+    const request = ++searchRequest.current;
     if (!searching) {
       setResults(null);
       return;
     }
     try {
       const { results } = await workspaceApi.search(slug, search.trim());
-      setResults(results);
-      setError(null);
+      if (request === searchRequest.current) {
+        setResults(results);
+        setError(null);
+      }
     } catch (err: any) {
-      setError(err.message);
-      setResults([]);
+      if (request === searchRequest.current) {
+        setError(err.message);
+        setResults([]);
+      }
     }
   }, [searching, search, slug]);
 

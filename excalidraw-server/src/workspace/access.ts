@@ -127,7 +127,29 @@ export interface SceneAccess {
   /** viewer or editor (or none) */
   role: Role;
   canManage: boolean;
+  /** access only through a read-only link (no collection, no grant) */
+  viaLinkOnly: boolean;
 }
+
+/**
+ * Sharing the workspace's policies (T5) allow. Checked where access is
+ * granted, too: links and grants a policy forbids count for nothing, even
+ * if they still exist (a race with switching the policy off, a scene moved
+ * into the workspace).
+ */
+const sharingAllowed = async (db: Kysely<Database>, workspaceId: string) => {
+  const workspace = await db
+    .selectFrom("workspaces")
+    .select("settings")
+    .where("id", "=", workspaceId)
+    .executeTakeFirst();
+  const policies = ((workspace?.settings as Record<string, any> | undefined)
+    ?.policies || {}) as { readLinks?: unknown; directSharing?: unknown };
+  return {
+    readLinks: policies.readLinks !== false,
+    directSharing: policies.directSharing !== false,
+  };
+};
 
 export const sceneAccess = async (
   db: Kysely<Database>,
@@ -170,11 +192,18 @@ export const sceneAccess = async (
     }
   }
 
-  const role = maxRole([
+  let grants = direct.map((grant) => grant.role as Role);
+  if (grants.length || viaLink !== "none") {
+    const allowed = await sharingAllowed(db, scene.workspace_id);
+    grants = allowed.directSharing ? grants : [];
+    viaLink = allowed.readLinks ? viaLink : "none";
+  }
+
+  const ownRole = maxRole([
     fromCollection === "manager" ? "editor" : fromCollection,
-    ...direct.map((grant) => grant.role as Role),
-    viaLink,
+    ...grants,
   ]);
+  const role = maxRole([ownRole, viaLink]);
 
   return {
     scene,
@@ -182,6 +211,7 @@ export const sceneAccess = async (
     collectionRole: fromCollection,
     role,
     canManage: atLeast(fromCollection, "editor"),
+    viaLinkOnly: ownRole === "none" && viaLink !== "none",
   };
 };
 

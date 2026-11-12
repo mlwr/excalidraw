@@ -42,24 +42,49 @@ export const createLifecycle = (ctx: AppContext) => {
             and (v.revision = s.revision
                  or (${!options.force} and v.taken_at > now() - make_interval(mins => ${minutes})))
         )
+      on conflict (scene_id, revision) do nothing
     `.execute(db);
   };
 
-  /** delete a scene for good: content, versions, comments, images */
-  const purgeScene = async (sceneId: string, actor: Person = null) => {
-    const scene = await db
-      .selectFrom("scenes")
-      .select(["id", "name", "workspace_id", "collection_id"])
+  /**
+   * Delete a scene for good: content, key, versions, comments, images.
+   * Only while it is in the trash (dueBefore: deleted before that time), so
+   * a restore just before cannot lose it. The row goes first: images left
+   * over after a storage error are unreadable without the scene's key.
+   */
+  const purgeScene = async (
+    sceneId: string,
+    actor: Person = null,
+    dueBefore?: Date,
+  ) => {
+    let query = db
+      .deleteFrom("scenes")
       .where("id", "=", sceneId)
+      .where("deleted_at", "is not", null);
+    if (dueBefore) {
+      query = query.where("deleted_at", "<", dueBefore);
+    }
+    // grants, comments, versions, search index, visits go along (cascade)
+    const scene = await query
+      .returning(["id", "name", "workspace_id", "collection_id"])
       .executeTakeFirst();
     if (!scene) {
       return false;
     }
-    await blobs.deletePrefix(`files/scenes/${scene.id}/`);
-    // scene ids all have the same length: the prefix is the exact key
-    await blobs.deletePrefix(`thumbnails/scenes/${scene.id}`);
-    // grants, comments, versions, search index, visits go along (cascade)
-    await db.deleteFrom("scenes").where("id", "=", scene.id).execute();
+    for (const prefix of [
+      `files/scenes/${scene.id}/`,
+      // scene ids all have the same length: the prefix is the exact key
+      `thumbnails/scenes/${scene.id}`,
+    ]) {
+      await blobs
+        .deletePrefix(prefix)
+        .catch((error) =>
+          ctx.log.warn(
+            { err: error, sceneId: scene.id, prefix },
+            "images of a purged scene not deleted",
+          ),
+        );
+    }
     ctx.events.record({
       type: "scene.purged",
       actor,
@@ -84,48 +109,50 @@ export const createLifecycle = (ctx: AppContext) => {
       const days = policiesOf(workspace, {
         trashRetentionDays: config.retention.trashDays,
       }).trashRetentionDays;
+      const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000);
       const due = await db
         .selectFrom("scenes")
         .select("id")
         .where("workspace_id", "=", workspace.id)
         .where("deleted_at", "is not", null)
-        .where(
-          "deleted_at",
-          "<",
-          sql<Date>`now() - make_interval(days => ${days})`,
-        )
+        .where("deleted_at", "<", cutoff)
         .limit(500)
         .execute();
       for (const { id } of due) {
-        purged += (await purgeScene(id)) ? 1 : 0;
+        try {
+          purged += (await purgeScene(id, null, cutoff)) ? 1 : 0;
+        } catch (error) {
+          ctx.log.warn({ err: error, sceneId: id }, "scene not purged");
+        }
       }
     }
     return purged;
   };
 
   /**
-   * Versions: everything for 2 days, then the last one of each day, none
-   * after VERSION_RETENTION_DAYS, at most 200 per scene.
+   * Versions, by when they were taken: all of the last 2 days, then the
+   * last one of each day, none after VERSION_RETENTION_DAYS, at most 200
+   * per scene.
    */
   const thinVersions = async () => {
     const days = config.retention.versionDays;
-    await sql`delete from scene_versions where created_at < now() - make_interval(days => ${days})`.execute(
+    await sql`delete from scene_versions where taken_at < now() - make_interval(days => ${days})`.execute(
       db,
     );
     await sql`
       delete from scene_versions v
-      where v.created_at < now() - interval '2 days'
+      where v.taken_at < now() - interval '2 days'
         and exists (
           select 1 from scene_versions w
           where w.scene_id = v.scene_id
-            and date_trunc('day', w.created_at) = date_trunc('day', v.created_at)
-            and w.created_at > v.created_at
+            and date_trunc('day', w.taken_at) = date_trunc('day', v.taken_at)
+            and w.taken_at > v.taken_at
         )
     `.execute(db);
     await sql`
       delete from scene_versions where id in (
         select id from (
-          select id, row_number() over (partition by scene_id order by created_at desc) as n
+          select id, row_number() over (partition by scene_id order by taken_at desc) as n
           from scene_versions
         ) ranked where n > 200
       )

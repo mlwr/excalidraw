@@ -6,12 +6,15 @@
  * - audit log (S2), app admins only, also as CSV
  * - branding (B8) and figures for the operators (B7)
  */
+import { Readable } from "node:stream";
+
 import { sql } from "kysely";
 
 import { HttpError, sendError } from "../util/http.js";
 import { hasControlChars, queryParam, searchText } from "../util/validate.js";
 import { actorOf } from "../workspace/access.js";
 import {
+  clearForbiddenSharing,
   parsePolicies,
   policiesOf,
   workspaceAccess,
@@ -32,6 +35,8 @@ const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 const MAX_LOGO_BYTES = 512 * 1024;
 const LOGO_TYPES = new Set(["image/png", "image/svg+xml", "image/webp"]);
 const ERASED_NAME = "Gelöschte Person";
+const AUDIT_CSV_PAGE = 1000;
+const AUDIT_CSV_MAX_ROWS = 500_000;
 
 export interface Branding {
   name: string;
@@ -239,40 +244,13 @@ export const registerAdminRoutes = (
         .where("id", "=", workspace.id)
         .execute();
 
-      // switched off: what exists of it stops working now
-      const affected: string[] = [];
-      if (before.readLinks && !after.readLinks) {
-        const scenes = await db
-          .updateTable("scenes")
-          .set({ read_link_token: null })
-          .where("workspace_id", "=", workspace.id)
-          .where("read_link_token", "is not", null)
-          .returning("id")
-          .execute();
-        affected.push(...scenes.map((scene) => scene.id));
-        if (scenes.length) {
-          await db
-            .deleteFrom("scene_link_viewers")
-            .where(
-              "scene_id",
-              "in",
-              scenes.map((scene) => scene.id),
-            )
-            .execute();
-        }
-      }
-      if (before.directSharing && !after.directSharing) {
-        const removed = await sql<{ scene_id: string }>`
-          delete from scene_grants g using scenes s
-          where g.scene_id = s.id and s.workspace_id = ${workspace.id}
-          returning g.scene_id
-        `.execute(db);
-        affected.push(...removed.rows.map((row) => row.scene_id));
-      }
+      // switched off: what exists of it stops working now (and whatever
+      // gets created meanwhile counts for nothing, see sceneAccess)
+      const affected = await clearForbiddenSharing(db, after, {
+        workspaceId: workspace.id,
+      });
       if (affected.length) {
-        await ctx.realtime
-          .recheckScenes([...new Set(affected)])
-          .catch(() => {});
+        await ctx.realtime.recheckScenes(affected).catch(() => {});
       }
       ctx.events.record({
         type: "workspace.updated",
@@ -717,13 +695,27 @@ export const registerAdminRoutes = (
               .updateTable("scenes")
               .set({
                 deleted_at: sql`coalesce(deleted_at, now())`,
-                deleted_by: request.auth!.user.id,
+                // whoever deleted earlier keeps restoring; what the person
+                // deleted or what goes now, the admin can restore
+                deleted_by: sql`case
+                  when deleted_at is null or deleted_by is null
+                    or deleted_by = ${user.id}
+                  then ${request.auth!.user.id}::uuid
+                  else deleted_by end`,
               })
               .where("collection_id", "=", collection.id)
               .executeTakeFirst();
             trashed += Number(result.numUpdatedRows);
           }
         }
+        // nobody owns these any more: restoring from the trash goes into
+        // the restorer's "Meine Szenen"
+        await trx
+          .updateTable("collections")
+          .set({ deleted_at: sql`coalesce(deleted_at, now())` })
+          .where("kind", "=", "personal")
+          .where("owner_id", "=", user.id)
+          .execute();
         for (const table of [
           "collection_grants",
           "scene_grants",
@@ -778,6 +770,13 @@ export const registerAdminRoutes = (
             target = case when type = 'auth.login_denied' then null else target end
           where target = ${user.id}
             or (actor_id = ${user.id} and type = 'auth.login_denied')
+            or (type = 'auth.login_denied'
+                and target in (${user.username ?? ""}, ${user.oidc_subject}))
+        `.execute(trx);
+        // names the person gave their API tokens
+        await sql`
+          update events set data = data - 'name'
+          where actor_id = ${user.id} and type like 'token.%'
         `.execute(trx);
       });
       // sessions last: they would be gone with the person anyway
@@ -795,7 +794,8 @@ export const registerAdminRoutes = (
         data: {
           scenesMoved: moved,
           scenesTrashed: trashed,
-          successor: successor?.name ?? null,
+          // the id: a name would outlive the successor's own removal
+          successorId: successor?.id ?? null,
         },
       });
       return { moved, trashed };
@@ -855,10 +855,8 @@ export const registerAdminRoutes = (
     requireAppAdmin(request);
     const query = request.query as Record<string, unknown>;
     if (queryParam(query.format) === "csv") {
-      const rows = await auditQuery(request)
-        .orderBy("id", "desc")
-        .limit(100_000)
-        .execute();
+      const filtered = auditQuery(request);
+      const user = request.auth!.user;
       const cell = (value: unknown) => {
         const text =
           value === null || value === undefined
@@ -867,36 +865,57 @@ export const registerAdminRoutes = (
             ? JSON.stringify(value)
             : String(value);
         // no formulas when opened in a spreadsheet
-        const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
+        const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
         return `"${safe.replace(/"/g, '""')}"`;
       };
-      const lines = [
-        "id;at;type;actor_id;actor_name;workspace_id;collection_id;scene_id;target;data;ip;user_agent",
-        ...rows.map((row) =>
-          [
-            row.id,
-            new Date(row.at).toISOString(),
-            row.type,
-            row.actor_id,
-            row.actor_name,
-            row.workspace_id,
-            row.collection_id,
-            row.scene_id,
-            row.target,
-            row.data,
-            row.ip,
-            row.user_agent,
-          ]
-            .map(cell)
-            .join(";"),
-        ),
-      ];
-      ctx.events.record({
-        type: "admin.audit_exported",
-        actor: request.auth!.user,
-        request,
-        data: { rows: rows.length },
-      });
+      // page by page: the log can be long, the pod's memory is not
+      async function* csv() {
+        yield "\ufeffid;at;type;actor_id;actor_name;workspace_id;collection_id;scene_id;target;data;ip;user_agent\r\n";
+        let before: string | null = null;
+        let count = 0;
+        while (count < AUDIT_CSV_MAX_ROWS) {
+          let page = filtered.orderBy("id", "desc").limit(AUDIT_CSV_PAGE);
+          if (before) {
+            page = page.where("id", "<", before);
+          }
+          const rows = await page.execute();
+          if (!rows.length) {
+            break;
+          }
+          yield rows
+            .map(
+              (row) =>
+                `${[
+                  row.id,
+                  new Date(row.at).toISOString(),
+                  row.type,
+                  row.actor_id,
+                  row.actor_name,
+                  row.workspace_id,
+                  row.collection_id,
+                  row.scene_id,
+                  row.target,
+                  row.data,
+                  row.ip,
+                  row.user_agent,
+                ]
+                  .map(cell)
+                  .join(";")}\r\n`,
+            )
+            .join("");
+          count += rows.length;
+          before = rows[rows.length - 1].id;
+          if (rows.length < AUDIT_CSV_PAGE) {
+            break;
+          }
+        }
+        ctx.events.record({
+          type: "admin.audit_exported",
+          actor: user,
+          request,
+          data: { rows: count },
+        });
+      }
       return reply
         .header("content-type", "text/csv; charset=utf-8")
         .header(
@@ -906,7 +925,7 @@ export const registerAdminRoutes = (
             .slice(0, 10)}.csv"`,
         )
         .header("cache-control", "no-store")
-        .send(`﻿${lines.join("\r\n")}\r\n`);
+        .send(Readable.from(csv()));
     }
     let events = auditQuery(request);
     const before = queryParam(query.before);

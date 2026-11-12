@@ -95,7 +95,8 @@ const PolicyForm = ({
           checked={policies.export}
           onChange={(event) => set("export", event.target.checked)}
         />
-        Alle dürfen exportieren (sonst nur Workspace-Admins)
+        Alle dürfen den Workspace oder Collections als ZIP exportieren (sonst
+        nur Workspace-Admins; einzelne Szenen speichern bleibt möglich)
       </label>
       <label className="ws-field">
         <span>Collections anlegen dürfen</span>

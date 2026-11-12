@@ -102,6 +102,7 @@ export const buildApp = async (
 
   // filled right below: they need the context themselves
   const ctx = {
+    log: app.log,
     config,
     db: dbHandle.db,
     sessions: new SessionStore(dbHandle.db, config.session.ttlSeconds),

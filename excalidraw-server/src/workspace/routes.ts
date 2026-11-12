@@ -29,6 +29,8 @@ import {
 } from "./access.js";
 import {
   atLeastWorkspace,
+  clearForbiddenSharing,
+  isWorkspaceAdmin,
   listWorkspaces,
   policiesOf,
   resolveWorkspace,
@@ -823,11 +825,52 @@ export const registerWorkspaceRoutes = (
       } else if (mode === "trash") {
         // deleted scenes I may restore: I manage their collection, or I
         // deleted them
+        const adminHere = await isWorkspaceAdmin(db, current, workspace.id);
+        // collections (deleted ones too) where I may edit: filtered in the
+        // database, so the limit below counts only what I may see
+        const editable = db
+          .selectFrom("collections")
+          .select("collections.id")
+          .where("collections.workspace_id", "=", workspace.id)
+          .where((eb) =>
+            eb.or([
+              eb.and([
+                eb("collections.kind", "=", "personal"),
+                eb("collections.owner_id", "=", current.id),
+              ]),
+              adminHere
+                ? eb("collections.kind", "=", "team")
+                : eb.and([
+                    eb("collections.kind", "=", "team"),
+                    eb.exists(
+                      eb
+                        .selectFrom("collection_grants")
+                        .select(sql`1`.as("one"))
+                        .whereRef(
+                          "collection_grants.collection_id",
+                          "=",
+                          "collections.id",
+                        )
+                        .where("collection_grants.role", "in", [
+                          "editor",
+                          "manager",
+                        ])
+                        .where(grantMatches(current)),
+                    ),
+                  ]),
+            ]),
+          );
         let builder = db
           .selectFrom("scenes")
           .select(SCENE_META_COLUMNS)
           .where("workspace_id", "=", workspace.id)
-          .where("deleted_at", "is not", null);
+          .where("deleted_at", "is not", null)
+          .where((eb) =>
+            eb.or([
+              eb("deleted_by", "=", current.id),
+              eb("collection_id", "in", editable),
+            ]),
+          );
         if (search) {
           builder = builder.where("name", "ilike", containsPattern(search));
         }
@@ -1093,6 +1136,17 @@ export const registerWorkspaceRoutes = (
         .set({ ...changes, updated_at: sql`now()` })
         .where("id", "=", access.scene.id)
         .execute();
+      if (
+        changes.workspace_id &&
+        changes.workspace_id !== access.scene.workspace_id
+      ) {
+        // into another workspace: its policies apply from now on
+        await clearForbiddenSharing(
+          db,
+          policies(await workspaceById(changes.workspace_id)),
+          { sceneIds: [access.scene.id] },
+        );
+      }
       if (
         changes.collection_id &&
         changes.collection_id !== access.scene.collection_id
@@ -1576,11 +1630,14 @@ export const registerWorkspaceRoutes = (
       }
       const scene = await db
         .selectFrom("scenes")
-        .select("id")
+        .select(["id", "workspace_id"])
         .where("read_link_token", "=", token)
         .where("deleted_at", "is", null)
         .executeTakeFirst();
-      if (!scene) {
+      if (
+        !scene ||
+        !policies(await workspaceById(scene.workspace_id)).readLinks
+      ) {
         return sendError(
           reply,
           404,

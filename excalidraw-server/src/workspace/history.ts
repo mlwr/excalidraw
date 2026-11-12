@@ -25,7 +25,7 @@ import { notFound, SCENE_ID_RE } from "./service.js";
 import { resolveWorkspace } from "./workspaces.js";
 
 import type { AppContext } from "../context.js";
-import type { Actor } from "./access.js";
+import type { Actor, SceneAccess } from "./access.js";
 import type { WorkspaceService } from "./service.js";
 import type {
   FastifyInstance,
@@ -100,9 +100,19 @@ export const registerHistoryRoutes = (
         current,
         request.params.sceneId,
       );
-      // its collection is gone: back into the restorer's "Meine Szenen"
+      // its collection is gone, or belonged to a removed person: back into
+      // the restorer's "Meine Szenen"
       let collectionId = collection.id;
-      if (collection.deleted_at) {
+      const ownerGone =
+        collection.kind === "personal" &&
+        collection.owner_id !== current.id &&
+        !!(await db
+          .selectFrom("users")
+          .select("id")
+          .where("id", "=", collection.owner_id!)
+          .where("erased_at", "is not", null)
+          .executeTakeFirst());
+      if (collection.deleted_at || ownerGone) {
         collectionId = (
           await workspace.ensurePersonalCollection(
             current.id,
@@ -142,21 +152,42 @@ export const registerHistoryRoutes = (
     options,
     async (request, reply) => {
       const { scene } = await trashed(actor(request), request.params.sceneId);
-      await ctx.lifecycle.purgeScene(scene.id, request.auth!.user);
+      // restored meanwhile: nothing is deleted
+      if (!(await ctx.lifecycle.purgeScene(scene.id, request.auth!.user))) {
+        throw notFound();
+      }
       return reply.code(204).send();
     },
   );
 
   // --- version history ------------------------------------------------------------
 
+  /**
+   * Earlier states only for people with access through a collection or a
+   * grant: a read-only link shows the scene as it is now, not what was
+   * removed before it was shared.
+   */
+  const historyAccess = (access: SceneAccess) => {
+    if (access.viaLinkOnly) {
+      throw new HttpError(
+        403,
+        "forbidden",
+        "Frühere Versionen sehen nur Personen, die über eine Collection oder eine Freigabe Zugriff haben.",
+      );
+    }
+    return access;
+  };
+
   app.get<{ Params: { sceneId: string } }>(
     "/api/scenes/:sceneId/versions",
     options,
     async (request, reply) => {
-      const access = await workspace.sceneFor(
-        actor(request),
-        request.params.sceneId,
-        "viewer",
+      const access = historyAccess(
+        await workspace.sceneFor(
+          actor(request),
+          request.params.sceneId,
+          "viewer",
+        ),
       );
       const versions = await db
         .selectFrom("scene_versions")
@@ -220,10 +251,12 @@ export const registerHistoryRoutes = (
     "/api/scenes/:sceneId/versions/:versionId",
     options,
     async (request, reply) => {
-      const access = await workspace.sceneFor(
-        actor(request),
-        request.params.sceneId,
-        "viewer",
+      const access = historyAccess(
+        await workspace.sceneFor(
+          actor(request),
+          request.params.sceneId,
+          "viewer",
+        ),
       );
       const version = await versionOf(
         access.scene.id,
@@ -257,7 +290,16 @@ export const registerHistoryRoutes = (
         config.dataEncryptionKey,
         access.scene.key_sealed,
       );
-      const elements = decryptElements(key, version.iv, version.ciphertext);
+      let elements;
+      try {
+        elements = decryptElements(key, version.iv, version.ciphertext);
+      } catch {
+        throw new HttpError(
+          422,
+          "unreadable_version",
+          "Diese Version lässt sich nicht lesen.",
+        );
+      }
       // the state that the restore replaces stays in the history
       await ctx.lifecycle.keepVersion(access.scene.id, {
         force: true,

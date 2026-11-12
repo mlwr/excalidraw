@@ -289,6 +289,12 @@ export interface SceneSearchTable {
     number | string
   >;
   indexed_at: Timestamp;
+  /** comments changed after indexed_at: index again */
+  dirty_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
 }
 
 export interface EventsTable {

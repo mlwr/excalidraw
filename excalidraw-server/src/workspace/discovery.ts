@@ -3,6 +3,7 @@
  * - search over all scenes of a workspace (W6): names, texts, comments
  * - export as a ZIP of .excalidraw files with their images (W9)
  */
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { PassThrough } from "node:stream";
 
@@ -25,6 +26,8 @@ import type {
 } from "fastify";
 
 const PAGE = 100;
+/** search results that get a snippet (each one decrypts a scene) */
+const SNIPPETS = 12;
 
 /** a file name that works on every system */
 const safeName = (name: string) =>
@@ -60,13 +63,15 @@ export const createDiscovery = (
       limit: options.limit ?? 30,
       offset: 0,
     });
+    // snippets decrypt scenes: only for the first results
     const results = [];
-    for (const scene of scenes) {
+    for (const [index, scene] of scenes.entries()) {
       results.push({
         ...scene,
-        snippet: config.search.content
-          ? await ctx.search.snippetOf(scene.id, query)
-          : null,
+        snippet:
+          config.search.content && index < SNIPPETS
+            ? await ctx.search.snippetOf(scene.id, query)
+            : null,
       });
     }
     return { total, results };
@@ -121,6 +126,9 @@ export const createDiscovery = (
         stream.destroy(error);
         return;
       }
+      if (stream.destroyed) {
+        return; // the download was cancelled
+      }
       stream.write(Buffer.from(chunk));
       if (final) {
         stream.end();
@@ -137,32 +145,57 @@ export const createDiscovery = (
       .header("cache-control", "no-store");
     const sent = reply.send(stream);
 
+    // the download ended early (closed tab): stop reading scenes
+    let aborted = false;
+    stream.once("close", () => {
+      aborted = !stream.writableFinished;
+    });
+
     const add = async (path: string, data: string) => {
       const entry = new ZipDeflate(path, { level: 6 });
       zip.add(entry);
       entry.push(Buffer.from(data, "utf8"), true);
-      if (stream.writableNeedDrain) {
-        await once(stream, "drain");
+      if (stream.writableNeedDrain && !stream.destroyed) {
+        // "close" too: a client that went away never drains
+        await Promise.race([once(stream, "drain"), once(stream, "close")]);
       }
     };
 
     const taken = new Set<string>();
     const manifest = [];
+    const unreadable: { id: string; name: string }[] = [];
     try {
       for (const item of items) {
+        if (aborted || stream.destroyed) {
+          break;
+        }
         const access = await workspace
           .sceneFor(current, item.id, "viewer")
           .catch(() => null);
         if (!access) {
           continue; // gone or access lost while exporting
         }
-        const { key, elements, revision } = await workspace.readContent(access);
-        const live = elements.filter((element) => !element.isDeleted);
-        const { files, omitted } = await workspace.readFiles(
-          access.scene.id,
-          key,
-          live,
-        );
+        let content;
+        try {
+          const { key, elements, revision } = await workspace.readContent(
+            access,
+          );
+          const live = elements.filter((element) => !element.isDeleted);
+          content = {
+            revision,
+            live,
+            ...(await workspace.readFiles(access.scene.id, key, live)),
+          };
+        } catch (error) {
+          // one broken scene must not break the whole export
+          ctx.log.warn(
+            { err: error, sceneId: access.scene.id },
+            "scene not exported",
+          );
+          unreadable.push({ id: access.scene.id, name: access.scene.name });
+          continue;
+        }
+        const { revision, live, files, omitted } = content;
         let path = `${safeName(item.folder)}/${safeName(access.scene.name)}`;
         for (let n = 2; taken.has(path.toLowerCase()); n++) {
           path = `${safeName(item.folder)}/${safeName(
@@ -200,6 +233,7 @@ export const createDiscovery = (
             exportedAt: new Date(),
             source: config.publicUrl.origin,
             scenes: manifest,
+            ...(unreadable.length ? { unreadable } : {}),
           },
           null,
           2,
@@ -226,9 +260,24 @@ export const registerDiscoveryRoutes = (
   const { db, config } = ctx;
   const actor = (request: FastifyRequest) => actorOf(request.auth!.user);
 
+  /** requests per minute and session (not per address: many share one) */
+  const perSession = (name: string, max: number) => ({
+    rateLimit: {
+      max,
+      timeWindow: "1 minute",
+      keyGenerator: (request: FastifyRequest) => {
+        const session = request.cookies?.[config.session.cookieName];
+        return session
+          ? `${name}:${createHash("sha256").update(session).digest("hex")}`
+          : request.ip;
+      },
+    },
+  });
+
   app.get(
     "/api/search",
-    { preHandler: requireAuth },
+    // each search decrypts scenes for its snippets
+    { preHandler: requireAuth, config: perSession("search", 120) },
     async (request, reply) => {
       const current = actor(request);
       const query = request.query as Record<string, unknown>;
@@ -281,7 +330,7 @@ export const registerDiscoveryRoutes = (
     "/api/export",
     {
       preHandler: requireAuth,
-      config: { rateLimit: { max: 6, timeWindow: "1 minute" } },
+      config: perSession("export", 6),
     },
     async (request, reply) => {
       const current = actor(request);

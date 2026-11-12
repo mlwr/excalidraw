@@ -52,11 +52,11 @@ Bekannte Grenzen:
 
 - **W5** Papierkorb je Workspace: Gelöschte Szenen lassen sich wiederherstellen (von allen, die sie bearbeiten durften, und von der Person, die gelöscht hat) oder endgültig löschen. Nach der Frist des Workspaces (Standard 30 Tage) löscht der Server sie mit Versionen, Kommentaren und Bildern.
 - **W6** Suche über Namen, Texte in Zeichnungen (auch Beschriftungen, Frame-Namen, Links) und Kommentare, mit Textausschnitt im Ergebnis. Gesucht wird nach Wortanfängen („Urlaub“ findet „Urlaubsantrag“), alle Wörter müssen vorkommen. Der Index enthält keine Wörter, nur verschlüsselte Hashes ([Datenschutz](./datenschutz.md#suche)). Auch über REST-API und MCP.
-- **W7** Versionsverlauf im Editor (Hauptmenü): Vor dem Speichern sichert der Server den vorherigen Stand, höchstens alle 10 Minuten, nach zwei Tagen einer pro Tag, bis 90 Tage. Alle mit Zugriff sehen Vorschauen; wer bearbeiten darf, stellt einen Stand für alle wieder her (der ersetzte Stand bleibt im Verlauf).
+- **W7** Versionsverlauf im Editor (Hauptmenü): Vor dem Speichern sichert der Server den vorherigen Stand, höchstens alle 10 Minuten, nach zwei Tagen einer pro Tag, bis 90 Tage nach der Sicherung. Alle mit Zugriff über eine Collection oder Freigabe sehen Vorschauen (über einen Nur-Lese-Link nicht: der zeigt nur den aktuellen Stand); wer bearbeiten darf, stellt einen Stand für alle wieder her (der ersetzte Stand bleibt im Verlauf).
 - **W8** Aktivität je Workspace: wer was angelegt, bearbeitet, verschoben, geteilt, kommentiert oder gelöscht hat, nur für Szenen und Collections, die man sehen darf. Mehrere Speichervorgänge einer Person innerhalb einer halben Stunde sind ein Eintrag.
 - **W9** Export als ZIP: alles, was man in einem Workspace sehen darf, oder eine Collection, als `.excalidraw`-Dateien mit Bildern und einer `manifest.json`. Auch über `GET /api/v1/export`.
 - **W10** Mehrere Workspaces mit Mitgliedern (Personen oder Keycloak-Gruppen) und Workspace-Admins. Der allgemeine Workspace ist für alle offen. Wer kein Mitglied ist, sieht in einem Workspace nur, was mit ihm geteilt wurde.
-- **T5** Richtlinien je Workspace: Nur-Lese-Links, direktes Teilen einzelner Szenen, wer Collections anlegt, wer exportiert, Frist im Papierkorb. Abschalten entfernt bestehende Links und Freigaben sofort.
+- **T5** Richtlinien je Workspace: Nur-Lese-Links, direktes Teilen einzelner Szenen, wer Collections anlegt, wer exportiert, Frist im Papierkorb. Abschalten entfernt bestehende Links und Freigaben sofort; wird eine Szene in einen Workspace verschoben, gelten ab dann dessen Richtlinien.
 - **S2** Audit-Log für App-Admins: Anmeldungen (auch abgelehnte), Tokens, Freigaben, Exporte, Löschungen und Verwaltungsaktionen mit Zeit, Person und Adresse; Filter nach Art und Zeitraum, Download als CSV.
 - **S3** Löschkonzept mit festen Fristen und dem Entfernen von Personen samt Übergabe ihrer Szenen ([Datenschutz und Löschkonzept](./datenschutz.md)).
 - **B7** Prometheus-Metriken auf eigenem Port, ServiceMonitor und Alarmregeln, nächtlicher `pg_dump` als CronJob ([Betrieb](./betrieb.md#monitoring)).
@@ -68,6 +68,8 @@ Bekannte Grenzen:
 - Versionen zeigen Bilder in der Vorschau nur, solange das Bild noch in der Szene vorkommt.
 - Szenen lassen sich in der Übersicht nur innerhalb eines Workspaces verschieben; über die REST-API auch in Collections anderer Workspaces.
 - Das Audit-Log zeigt IDs von Szenen, nicht ihre Namen, wenn die Szene inzwischen gelöscht ist.
+- Die Export-Richtlinie betrifft den ZIP-Export ganzer Workspaces und Collections. Einzelne Szenen lassen sich weiterhin im Editor speichern und über die REST-API lesen; wer das unterbinden will, schaltet die API ab oder beschränkt sie auf eine Rolle (`API_REQUIRED_ROLE`).
+- Beim Update auf Phase 4 kommen Szenen, die vorher gelöscht (nur ausgeblendet) wurden, in den Papierkorb; ihre Frist beginnt mit dem Update.
 
 ## Priorisierung
 

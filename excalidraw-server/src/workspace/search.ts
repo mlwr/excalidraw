@@ -25,6 +25,8 @@ const MAX_PREFIX = 15;
 const MAX_WORD = 30;
 const MAX_TOKENS = 20_000;
 const BATCH = 25;
+/** snippets come from scenes up to this size (encrypted) */
+const SNIPPET_MAX_BYTES = 4 * 1024 * 1024;
 
 const normalize = (text: string) => text.normalize("NFKC").toLowerCase();
 
@@ -101,19 +103,33 @@ export const createSearch = (ctx: AppContext) => {
       .readBigInt64BE(0)
       .toString();
 
-  const sceneTexts = async (sceneId: string) => {
+  /**
+   * texts of a scene: drawing and comments, decrypted. maxBytes: give up on
+   * larger scenes (snippets while searching must stay cheap).
+   */
+  const sceneTexts = async (sceneId: string, maxBytes = Infinity) => {
     const scene = await db
       .selectFrom("scenes")
-      .select(["id", "key_sealed", "iv", "ciphertext", "revision"])
+      .select([
+        "id",
+        "key_sealed",
+        "revision",
+        sql<number>`coalesce(octet_length(ciphertext), 0)`.as("size"),
+      ])
       .where("id", "=", sceneId)
       .executeTakeFirst();
-    if (!scene) {
+    if (!scene || scene.size > maxBytes) {
       return null;
     }
+    const content = await db
+      .selectFrom("scenes")
+      .select(["iv", "ciphertext"])
+      .where("id", "=", sceneId)
+      .executeTakeFirst();
     const key = openSceneKey(config.dataEncryptionKey, scene.key_sealed);
     const elements =
-      Number(scene.revision) > 0 && scene.iv && scene.ciphertext
-        ? decryptElements(key, scene.iv, scene.ciphertext)
+      Number(scene.revision) > 0 && content?.iv && content.ciphertext
+        ? decryptElements(key, content.iv, content.ciphertext)
         : [];
     const comments = await db
       .selectFrom("comments")
@@ -132,8 +148,51 @@ export const createSearch = (ctx: AppContext) => {
     };
   };
 
+  const saveIndex = async (
+    sceneId: string,
+    hashes: string[],
+    revision: string | number,
+    startedAt: Date,
+  ) => {
+    // indexed_at = when reading began: comments changed while indexing
+    // (dirty_at later) bring the scene back into the queue
+    await db
+      .insertInto("scene_search")
+      .values({
+        scene_id: sceneId,
+        tokens: hashes,
+        indexed_revision: revision,
+        indexed_at: startedAt,
+      })
+      .onConflict((oc) =>
+        oc.column("scene_id").doUpdateSet({
+          tokens: hashes,
+          indexed_revision: revision,
+          indexed_at: startedAt,
+        }),
+      )
+      .execute();
+  };
+
   const indexScene = async (sceneId: string) => {
-    const texts = await sceneTexts(sceneId);
+    const { rows } = await sql<{ now: Date }>`select now() as now`.execute(db);
+    const startedAt = rows[0].now;
+    let texts: Awaited<ReturnType<typeof sceneTexts>>;
+    try {
+      texts = await sceneTexts(sceneId);
+    } catch (error) {
+      // unreadable content: keep it out of the queue until it changes
+      ctx.log.warn({ err: error, sceneId }, "scene not indexable");
+      const scene = await db
+        .selectFrom("scenes")
+        .select("revision")
+        .where("id", "=", sceneId)
+        .executeTakeFirst();
+      if (scene) {
+        await saveIndex(sceneId, [], scene.revision, startedAt);
+      }
+      return;
+    }
     if (!texts) {
       return;
     }
@@ -141,23 +200,7 @@ export const createSearch = (ctx: AppContext) => {
     [...texts.drawing, ...texts.comments].forEach((text) =>
       tokensOf(text, tokens),
     );
-    const hashes = [...tokens].map(hash);
-    await db
-      .insertInto("scene_search")
-      .values({
-        scene_id: sceneId,
-        tokens: hashes,
-        indexed_revision: texts.revision,
-        indexed_at: sql`now()`,
-      })
-      .onConflict((oc) =>
-        oc.column("scene_id").doUpdateSet({
-          tokens: hashes,
-          indexed_revision: texts.revision,
-          indexed_at: sql`now()`,
-        }),
-      )
-      .execute();
+    await saveIndex(sceneId, [...tokens].map(hash), texts.revision, startedAt);
   };
 
   /** the job: index scenes whose content or comments changed */
@@ -169,7 +212,9 @@ export const createSearch = (ctx: AppContext) => {
       select s.id from scenes s
       left join scene_search i on i.scene_id = s.id
       where s.deleted_at is null
-        and (i.scene_id is null or i.indexed_revision < s.revision)
+        and (i.scene_id is null
+             or i.indexed_revision < s.revision
+             or i.dirty_at > i.indexed_at)
       order by s.updated_at desc
       limit ${BATCH}
     `.execute(db);
@@ -183,7 +228,7 @@ export const createSearch = (ctx: AppContext) => {
   const markDirty = (sceneId: string) => {
     void db
       .updateTable("scene_search")
-      .set({ indexed_revision: -1 })
+      .set({ dirty_at: sql`now()` })
       .where("scene_id", "=", sceneId)
       .execute()
       .catch(() => {});
@@ -203,7 +248,10 @@ export const createSearch = (ctx: AppContext) => {
     if (!words.length) {
       return null;
     }
-    const texts = await sceneTexts(sceneId);
+    // unreadable or very large scenes get no snippet
+    const texts = await sceneTexts(sceneId, SNIPPET_MAX_BYTES).catch(
+      () => null,
+    );
     if (!texts) {
       return null;
     }

@@ -86,6 +86,8 @@ export interface EventInput {
 
 /** edits by one person on one scene within this time are one event */
 const EDIT_WINDOW = "30 minutes";
+/** ... but one entry covers at most this long */
+const EDIT_SPAN = "3 hours";
 
 export const createEventLog = (
   db: Kysely<Database>,
@@ -113,55 +115,63 @@ export const createEventLog = (
       .insertInto("events")
       .values(values(event))
       .execute()
-      .catch((error) => log.error({ err: error, event }, "event not recorded"));
+      .catch((error) =>
+        // never the request itself: it carries cookies and tokens
+        log.error(
+          {
+            err: error,
+            type: event.type,
+            actorId: event.actor?.id,
+            sceneId: event.sceneId,
+          },
+          "event not recorded",
+        ),
+      );
   };
 
-  /** "scene.edited", once per person and scene within EDIT_WINDOW */
+  /**
+   * "scene.edited": saves of one person on one scene are one entry while
+   * they follow each other within EDIT_WINDOW (for at most EDIT_SPAN). The
+   * entry moves to the top with each save (deleted and written anew), so
+   * the feed, which pages by id, stays in order.
+   */
   const recordEdit = (event: Omit<EventInput, "type">) => {
     const actorId = event.actor?.id;
     if (!actorId || !event.sceneId) {
       return;
     }
     onEvent("scene.edited");
-    void (async () => {
-      const updated = await db
-        .updateTable("events")
-        .set({
-          at: sql`now()`,
-          data: sql`jsonb_set(data, '{count}', to_jsonb(coalesce((data->>'count')::int, 1) + 1))`,
-        })
-        .where(
-          "id",
-          "=",
-          db
-            .selectFrom("events")
-            .select("id")
-            .where("type", "=", "scene.edited")
-            .where("scene_id", "=", event.sceneId!)
-            .where("actor_id", "=", actorId)
-            .where(
-              "at",
-              ">",
-              sql<Date>`now() - ${sql.lit(EDIT_WINDOW)}::interval`,
-            )
-            .orderBy("at", "desc")
-            .limit(1),
+    const row = values({ ...event, type: "scene.edited" });
+    void sql`
+      with previous as (
+        delete from events where id = (
+          select id from events
+          where type = 'scene.edited'
+            and scene_id = ${event.sceneId}
+            and actor_id = ${actorId}
+            and at > now() - ${sql.lit(EDIT_WINDOW)}::interval
+            and coalesce((data->>'first')::timestamptz, at)
+                > now() - ${sql.lit(EDIT_SPAN)}::interval
+          order by id desc
+          limit 1
         )
-        .returning("id")
-        .executeTakeFirst();
-      if (!updated) {
-        await db
-          .insertInto("events")
-          .values(
-            values({
-              ...event,
-              type: "scene.edited",
-              data: { count: 1, ...event.data },
-            }),
-          )
-          .execute();
-      }
-    })().catch((error) => log.error({ err: error }, "edit event not recorded"));
+        returning data
+      )
+      insert into events
+        (type, actor_id, actor_name, workspace_id, collection_id, scene_id,
+         target, data, ip, user_agent)
+      values (
+        'scene.edited', ${row.actor_id}, ${row.actor_name}, ${row.workspace_id},
+        ${row.collection_id}, ${row.scene_id}, ${row.target},
+        ${JSON.stringify(row.data)}::jsonb || jsonb_build_object(
+          'count', coalesce((select (data->>'count')::int from previous), 0) + 1,
+          'first', coalesce((select data->'first' from previous), to_jsonb(now()))
+        ),
+        ${row.ip}, ${row.user_agent}
+      )
+    `
+      .execute(db)
+      .catch((error) => log.error({ err: error }, "edit event not recorded"));
   };
 
   return { record, recordEdit };

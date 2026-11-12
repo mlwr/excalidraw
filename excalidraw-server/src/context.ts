@@ -1,3 +1,4 @@
+import type { FastifyBaseLogger } from "fastify";
 import type { OidcClient } from "./auth/oidc.js";
 import type { AuthContext, SessionStore } from "./auth/sessions.js";
 import type { Config } from "./config.js";
@@ -35,6 +36,8 @@ export interface RealtimeHooks {
 }
 
 export interface AppContext {
+  /** for background work that has no request to log through */
+  log: FastifyBaseLogger;
   config: Config;
   db: Kysely<Database>;
   sessions: SessionStore;

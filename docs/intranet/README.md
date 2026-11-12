@@ -72,7 +72,7 @@ Rechte:
 - **Kommentare** schreibt jede Person, die die Szene sehen darf, auch mit Leserecht. Erledigen darf, wer bearbeiten darf, und wer den Kommentar begonnen hat; löschen darf die Verfasserin bzw. der Verfasser und wer die Szene verwaltet.
 - **Workspaces**: Der allgemeine Workspace ist für alle offen. Weitere Workspaces legen App-Admins an und tragen Mitglieder (Personen oder Keycloak-Gruppen) und Workspace-Admins ein. Workspace-Admins verwalten alle Team-Collections, Mitglieder und Richtlinien ihres Workspaces (Nur-Lese-Links, direktes Teilen, wer Collections anlegt, wer exportiert, Frist im Papierkorb). Wer kein Mitglied ist, sieht dort nur, was mit ihm geteilt wurde.
 - **Papierkorb**: Gelöschte Szenen holt zurück, wer sie bearbeiten durfte oder sie gelöscht hat. Nach der Frist (Standard 30 Tage) sind sie endgültig weg.
-- **Versionen**: im Editor über das Hauptmenü „Versionsverlauf…“; alle mit Zugriff sehen frühere Stände, wer bearbeiten darf, stellt einen wieder her.
+- **Versionen**: im Editor über das Hauptmenü „Versionsverlauf…“; alle mit Zugriff über eine Collection oder Freigabe sehen frühere Stände (über einen Nur-Lese-Link nicht), wer bearbeiten darf, stellt einen wieder her.
 
 Kommentieren: im Editor oben rechts das Sprechblasen-Symbol, dann „Kommentar hinzufügen“ und auf die Stelle klicken. Liegt dort ein Element, hängt der Kommentar daran und wandert mit, wenn es verschoben wird.
 

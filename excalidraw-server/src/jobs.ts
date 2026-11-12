@@ -32,13 +32,17 @@ export const startJobs = (
 ) => {
   const running = new Set<string>();
 
+  /** never throws: a failing job (or database) must not end the process */
   const runOnce = async (job: Job) => {
     if (running.has(job.name)) {
       return;
     }
     running.add(job.name);
-    const client = await pool.connect();
+    let client: pg.PoolClient | null = null;
+    // a connection that may still hold the lock must not go back to the pool
+    let discard = false;
     try {
+      client = await pool.connect();
       const { rows } = await client.query(
         "select pg_try_advisory_lock($1, $2) as locked",
         [LOCK_NAMESPACE, lockKey(job.name)],
@@ -53,27 +57,35 @@ export const startJobs = (
         onFinish(job.name, false);
         throw error;
       } finally {
-        await client.query("select pg_advisory_unlock($1, $2)", [
-          LOCK_NAMESPACE,
-          lockKey(job.name),
-        ]);
+        try {
+          await client.query("select pg_advisory_unlock($1, $2)", [
+            LOCK_NAMESPACE,
+            lockKey(job.name),
+          ]);
+        } catch {
+          discard = true;
+        }
       }
     } catch (error) {
       log.warn({ err: error, job: job.name }, "background job failed");
     } finally {
-      client.release();
+      client?.release(discard || undefined);
       running.delete(job.name);
     }
+  };
+
+  const start = (job: Job) => {
+    runOnce(job).catch(() => {});
   };
 
   const timers = jobs.map((job) => {
     // spread the first runs, so not every job starts with the server
     const first = setTimeout(
-      () => void runOnce(job),
+      () => start(job),
       Math.min(job.everyMs, 5000 + Math.random() * 10000),
     );
     first.unref();
-    const timer = setInterval(() => void runOnce(job), job.everyMs);
+    const timer = setInterval(() => start(job), job.everyMs);
     timer.unref();
     return [first, timer];
   });
