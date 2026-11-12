@@ -968,4 +968,221 @@ describeE2E("browser end-to-end", () => {
     expect(cspViolations).toEqual([]);
     expect(pageErrors).toEqual([]);
   }, 120000);
+  it("runs phase 6: subfolders, library catalog, fonts, embeds, slides with notes and steps, remote and live audience", async () => {
+    const pagesOf = (context: BrowserContext) => context.pages();
+
+    // --- W4: a subfolder, with the tree and the path ---------------------------
+    env.oidc.setUser(bob);
+    const bobContext = await newContext();
+    const dashboard = await openDashboard(bobContext);
+    await dashboard.click("button[aria-label='Neue Collection']");
+    await dashboard.fill(".ws-dialog input", "Abteilung");
+    await dashboard.click(".ws-dialog__footer .ws-button--primary");
+    await dashboard.waitForSelector("h1:has-text('Abteilung')");
+    await dashboard.click(".ws-main__actions >> text=Neuer Unterordner");
+    await dashboard.fill(".ws-dialog input", "Projekt");
+    await dashboard.click(".ws-dialog__footer .ws-button--primary");
+    await dashboard.waitForSelector("h1:has-text('Projekt')");
+    await dashboard.waitForSelector(".ws-breadcrumbs >> text=Abteilung");
+    await dashboard.waitForSelector(
+      ".ws-tree-row[style*='padding-inline-start: 0.9rem'] >> text=Projekt",
+    );
+    await dashboard.click(".ws-breadcrumbs >> text=Abteilung");
+    await dashboard.waitForSelector(".ws-subfolders >> text=Projekt");
+
+    // --- L3: publish into the catalog, add to the own library -----------------
+    const catalog = await bobContext.newPage();
+    await catalog.goto(`${APP_URL}/libraries`);
+    await catalog.waitForSelector("h1:has-text('Bibliotheken')");
+    await catalog.click("button:has-text('Veröffentlichen')");
+    await catalog.fill(".ws-dialog input >> nth=0", "Netzwerk-Symbole");
+    await catalog.setInputFiles("input[aria-label='Bibliotheksdatei']", {
+      name: "netzwerk.excalidrawlib",
+      mimeType: "application/json",
+      buffer: Buffer.from(
+        JSON.stringify({
+          type: "excalidrawlib",
+          version: 2,
+          libraryItems: [
+            {
+              id: "router",
+              status: "published",
+              created: 1,
+              elements: [
+                {
+                  id: "router-shape",
+                  type: "rectangle",
+                  x: 0,
+                  y: 0,
+                  width: 120,
+                  height: 80,
+                  strokeColor: "#1e1e1e",
+                  backgroundColor: "transparent",
+                  fillStyle: "solid",
+                  strokeWidth: 2,
+                  roughness: 1,
+                  opacity: 100,
+                  seed: 1,
+                  version: 1,
+                  versionNonce: 1,
+                  isDeleted: false,
+                  groupIds: [],
+                  boundElements: null,
+                  angle: 0,
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    });
+    await catalog.click(".ws-dialog__footer .ws-button--primary");
+    const card = catalog.locator(".ws-catalog__card", {
+      hasText: "Netzwerk-Symbole",
+    });
+    await card.waitFor();
+    await card.locator(".ws-catalog__preview img").waitFor();
+    await card.locator("button:has-text('Hinzufügen')").click();
+    await catalog.waitForSelector(
+      "text=1 Eintrag aus „Netzwerk-Symbole“ hinzugefügt.",
+    );
+
+    // --- E2 and E3: the admins allow a wiki and add a company font -------------
+    env.oidc.setUser(alice);
+    const aliceContext = await newContext();
+    const admin = await aliceContext.newPage();
+    await admin.goto(`${APP_URL}/admin`);
+    await admin.waitForSelector(".ws-admin h1:has-text('Workspaces')", {
+      timeout: 30000,
+    });
+    await admin.click(".ws-sidebar >> text=Editor");
+    await admin.fill(".ws-admin__hosts", "wiki.intranet.example");
+    await admin.click(
+      ".ws-admin__card >> nth=0 >> button:has-text('Speichern')",
+    );
+    await admin.waitForSelector("text=Gespeichert.");
+    await admin.fill("input[placeholder='z. B. Firma Sans']", "Firma Sans");
+    await admin.setInputFiles(
+      ".ws-admin__font-upload input[type='file']",
+      path.resolve(
+        STATIC_DIR,
+        "../../packages/excalidraw/fonts/Liberation/LiberationSans-Regular.woff2",
+      ),
+    );
+    await admin.click("button:has-text('Hochladen')");
+    await admin.waitForSelector(".ws-admin__font-preview >> text=Firma Sans");
+    const me = (
+      await (await admin.request.get(`${APP_URL}/api/auth/me`)).json()
+    ).config;
+    expect(me.embeds.allowedHosts).toEqual(["wiki.intranet.example"]);
+    expect(me.fonts.map((font: { family: string }) => font.family)).toEqual([
+      "Firma Sans",
+    ]);
+
+    // --- P2: new slides with a layout, also with Alt+A ------------------------
+    const editor = await bobContext.newPage();
+    await editor.goto(`${APP_URL}/`);
+    await editor.waitForSelector(".ws-dashboard .ws-main h1");
+    await editor.click(".ws-main__actions >> text=Neue Szene");
+    await editor.waitForURL(/\/s\/[\w-]+$/);
+    await editor.waitForSelector(".welcome-screen-center", { timeout: 30000 });
+    await editor.click(".default-sidebar-trigger");
+    await editor.click("[aria-label='Folien und Präsentation']");
+    await editor.selectOption(
+      "select[aria-label='Layout der neuen Folie']",
+      "titleContent",
+    );
+    await editor.click(".ws-slides__new >> text=Neue Folie");
+    const names = editor.locator(".ws-slides__name");
+    await expect.poll(() => names.allInnerTexts()).toEqual(["1. Folie 1"]);
+    // (the focus is still in the sidebar: the shortcut works anywhere)
+    await editor.keyboard.press("Alt+KeyA");
+    await expect
+      .poll(() => names.allInnerTexts())
+      .toEqual(["1. Folie 1", "2. Folie 2"]);
+
+    // --- P3 and P5: notes, and everything on slide 1 after a click -------------
+    await editor.click(".ws-slides__item >> nth=0 >> .ws-slides__more");
+    await editor.fill(
+      ".ws-slides__notes",
+      "Budget erwähnen: https://wiki.intranet.example/budget",
+    );
+    await editor.click(".ws-slides__head strong");
+    // select everything on the canvas (this closes the sidebar), back again
+    await editor.click("canvas.interactive", { position: { x: 5, y: 5 } });
+    await editor.keyboard.press("Control+KeyA");
+    await editor.click(".default-sidebar-trigger");
+    await editor.click("[aria-label='Folien und Präsentation']");
+    await editor.click(".ws-slides__item >> nth=0 >> .ws-slides__more");
+    await expect
+      .poll(() => editor.locator(".ws-slides__notes").inputValue())
+      .toMatch(/^Budget erwähnen/);
+    await editor.click("text=Auswahl später einblenden");
+    await editor.waitForSelector(".ws-slides__steps >> text=1 Einblendung");
+
+    // --- presenting: steps, presenter window, phone remote ---------------------
+    await editor.click(".ws-slides__head >> text=Präsentieren");
+    const controls = editor.locator(".ws-present");
+    await controls.waitFor();
+    const counter = controls.locator(".ws-present__counter");
+    await expect.poll(() => counter.innerText()).toMatch(/1 \/ 2\s*· 0\/1/);
+    await editor.keyboard.press("ArrowRight");
+    await expect.poll(() => counter.innerText()).toMatch(/1 \/ 2\s*· 1\/1/);
+
+    const presenterWindow = bobContext.waitForEvent("page");
+    await controls.locator("text=Referentenansicht").click();
+    const presenter = await presenterWindow;
+    await presenter.waitForSelector(
+      ".ws-presenter__notes >> text=Budget erwähnen",
+    );
+    await presenter.waitForSelector(
+      ".ws-presenter__notes a[href='https://wiki.intranet.example/budget']",
+    );
+    await presenter.waitForSelector(".ws-presenter__current img");
+
+    await controls.locator("text=Fernbedienung").click();
+    const remoteUrl = await editor
+      .locator("input[aria-label='Adresse der Fernbedienung']")
+      .inputValue();
+    expect(remoteUrl).toMatch(new RegExp(`^${APP_URL}/remote#[\\w-]{22,}$`));
+    await editor.waitForSelector("img[alt='QR-Code der Fernbedienung']");
+    const phone = await bobContext.newPage();
+    await phone.goto(remoteUrl);
+    await phone.waitForSelector(".ws-remote__title");
+    await phone.click("button[aria-label='Weiter']");
+    await expect.poll(() => counter.innerText()).toMatch(/2 \/ 2/);
+    await phone.click("button[aria-label='Zurück']");
+    await expect.poll(() => counter.innerText()).toMatch(/1 \/ 2\s*· 1\/1/);
+
+    // --- P6: an audience follows, reacts and raises a hand ---------------------
+    await controls.locator("button:has-text('Live')").click();
+    const liveUrl = await editor
+      .locator("input[aria-label='Link für das Publikum']")
+      .inputValue();
+    expect(liveUrl).toMatch(new RegExp(`^${APP_URL}/live/[\\w-]{22}$`));
+    env.oidc.setUser(carolIT);
+    const audienceContext = await newContext();
+    const audience = await audienceContext.newPage();
+    await audience.goto(liveUrl);
+    await audience.waitForSelector("text=Die Präsentation beginnt gleich");
+    await editor.click("text=Start fürs Publikum");
+    await audience.waitForSelector(".ws-live__stage img", { timeout: 30000 });
+    await audience.click("button[aria-label='Reaktion 👏']");
+    await editor.waitForSelector(".ws-present-reactions span:has-text('👏')");
+    await audience.click(".ws-live__hand");
+    await editor.waitForSelector(".ws-present-panel__hands >> text=Carol IT");
+    await editor.click(".ws-present-panel__hands >> text=senken");
+    await audience.waitForSelector(".ws-live__hand:has-text('Melden')");
+
+    await editor.keyboard.press("Escape");
+    await editor.keyboard.press("Escape");
+    await controls.waitFor({ state: "detached" });
+    await audience.waitForSelector("text=Die Präsentation ist beendet.");
+    await presenter.waitForSelector("text=Die Präsentation ist beendet.");
+    expect(pagesOf(bobContext).length).toBeGreaterThan(1);
+
+    expect(external).toEqual([]);
+    expect(cspViolations).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  }, 240000);
 });

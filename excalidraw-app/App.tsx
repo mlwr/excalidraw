@@ -1156,7 +1156,12 @@ const ExcalidrawWrapper = () => {
           withTeamLibraries={isWorkspaceEnabled}
           canEditSlides={activeScene?.role !== "viewer"}
         />
-        {excalidrawAPI && <PresentationMode excalidrawAPI={excalidrawAPI} />}
+        {excalidrawAPI && (
+          <PresentationMode
+            excalidrawAPI={excalidrawAPI}
+            canEdit={activeScene?.role !== "viewer"}
+          />
+        )}
         {excalidrawAPI && (
           <DocumentActions
             excalidrawAPI={excalidrawAPI}

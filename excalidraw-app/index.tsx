@@ -46,6 +46,38 @@ const renderAdmin = async () => {
   );
 };
 
+const renderPresenting = async (
+  route:
+    | { kind: "presenter"; channel: string }
+    | { kind: "remote"; key: string }
+    | { kind: "live"; id: string },
+) => {
+  if (route.kind === "presenter") {
+    const { PresenterView } = await import(
+      "./workspace/presentation/PresenterView"
+    );
+    root.render(
+      <StrictMode>
+        <PresenterView channelId={route.channel} />
+      </StrictMode>,
+    );
+  } else if (route.kind === "remote") {
+    const { RemotePage } = await import("./workspace/presentation/RemotePage");
+    root.render(
+      <StrictMode>
+        <RemotePage remoteKey={route.key} />
+      </StrictMode>,
+    );
+  } else {
+    const { LivePage } = await import("./workspace/presentation/LivePage");
+    root.render(
+      <StrictMode>
+        <LivePage liveId={route.id} />
+      </StrictMode>,
+    );
+  }
+};
+
 const renderLibraryCatalog = async () => {
   const { LibraryCatalog } = await import("./workspace/LibraryCatalog");
   root.render(
@@ -76,6 +108,10 @@ const start = async () => {
   }
   if (early.kind === "embedLogin") {
     return renderEmbed(null);
+  }
+  // the presenter window talks to its presentation in this browser only
+  if (early.kind === "presenter") {
+    return renderPresenting(early);
   }
   // anything else under /embed is no embedding link: never the app there
   if (/^\/embed(\/|$)/.test(window.location.pathname)) {
@@ -130,6 +166,10 @@ const start = async () => {
 
   if (route.kind === "libraryCatalog") {
     return renderLibraryCatalog();
+  }
+
+  if (route.kind === "remote" || route.kind === "live") {
+    return renderPresenting(route);
   }
 
   if (route.kind === "scene") {

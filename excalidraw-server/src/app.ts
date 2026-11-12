@@ -157,6 +157,10 @@ export const buildApp = async (
     global: true,
     max: 1200,
     timeWindow: "1 minute",
+    // the app's own files (dozens of chunks per page load) are no API
+    // calls; counting them would lock out busy users, not attackers
+    allowList: (request) =>
+      !request.url.startsWith("/api/") && !request.url.startsWith("/mcp"),
   });
 
   app.addContentTypeParser(

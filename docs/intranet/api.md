@@ -128,3 +128,43 @@ jq '{name: "Importiert", content: .}' szene.excalidraw | curl -X POST \
 ```
 
 Beim Ersetzen (`PUT …/content`) gewinnen geänderte Elemente gegenüber den Kopien in offenen Editoren; Elemente, die fehlen, werden gelöscht. Mit `expectedRevision` (aus `GET …/content`) schlägt das Ersetzen fehl, wenn jemand die Szene inzwischen geändert hat.
+
+## Bilder und Kommandozeile
+
+Eine Szene oder einen Frame als Bild, etwa für Dokumentation oder Wikis:
+
+```bash
+# ganze Szene als SVG (Schriften eingebettet)
+curl -H "Authorization: Bearer $EXCALIDRAW_TOKEN" \
+  "https://excalidraw.intranet.example/api/v1/scenes/$SCENE/image" > szene.svg
+
+# nur der Frame „Architektur“, als PNG in doppelter Größe, dunkel
+curl -H "Authorization: Bearer $EXCALIDRAW_TOKEN" \
+  "https://excalidraw.intranet.example/api/v1/scenes/$SCENE/image?format=png&scale=2&theme=dark&frame=Architektur" > architektur.png
+```
+
+| Parameter | Werte | Bedeutung |
+| --- | --- | --- |
+| `format` | `svg` (Standard), `png` | Bildformat |
+| `frame` | Name oder id | nur dieser Frame (404 `frame_not_found`, wenn es ihn nicht gibt) |
+| `theme` | `light` (Standard), `dark` | Farbschema |
+| `background` | `true` (Standard), `false` | `false`: durchsichtig |
+| `scale` | 1 bis 4 | Pixel pro Szenenpixel |
+
+Bilder bis 16 Megapixel; größere lehnt der Server mit 422 ab (dann einen Frame wählen oder `scale` verkleinern). Höchstens 30 Bilder pro Token und Minute.
+
+Das Kommandozeilen-Tool `excalidraw.mjs` (Node.js 20 oder neuer, ohne weitere Abhängigkeiten) liegt unter `/api/v1/cli`:
+
+```bash
+curl -o excalidraw.mjs https://excalidraw.intranet.example/api/v1/cli
+export EXCALIDRAW_URL=https://excalidraw.intranet.example
+export EXCALIDRAW_TOKEN=exc_...
+node excalidraw.mjs scenes --collection <ID>
+node excalidraw.mjs render <Szene oder Link> --frame "Folie 1" -o folie1.png
+node excalidraw.mjs export <Szene> -o szene.excalidraw
+node excalidraw.mjs import szene.excalidraw --collection <ID> --name "Kopie"
+node excalidraw.mjs update <Szene> szene.excalidraw
+node excalidraw.mjs export-all --collection <ID> -o collection.zip
+```
+
+`node excalidraw.mjs --help` zeigt alle Befehle; `--json` gibt Listen und Ergebnisse als JSON aus. Fehler enden mit einer Meldung auf stderr und dem Rückgabewert 1 (Bedienfehler 2).

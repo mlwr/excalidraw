@@ -11,7 +11,7 @@ Grundlage ist die Priorisierung vom 11.11.2026 (Muss, Soll, Kann, Gestrichen) de
 | 3 Kommentare und Schnittstellen | Z2 Kommentare, I1 REST-API, I2 MCP-Server | umgesetzt |
 | 4 Soll: Ablage und Betrieb | W5 Papierkorb, W6 Suche, W7 Versionsverlauf, W8 Aktivitäts-Feed, W9 Export, W10 mehrere Workspaces, T5 Admin-Richtlinien, S2 Audit-Log, S3 Löschkonzept, B7 Monitoring/Backups, B8 Branding | umgesetzt |
 | 5 Soll: Zusammenarbeit, Präsentation, KI, Bibliotheken | Z3 Benachrichtigungen, Z4 Spotlight, T3 Einbetten, P1 Präsentationsmodus, P7 Export PDF/PPTX, K1 KI mit internem Sprachmodell, K2 KI-Steuerung, L1 persönliche Bibliothek, L2 Team-Bibliotheken, E4 PDF-Import | umgesetzt |
-| 6 Kann | E2, E3, I3, L3, P2–P6, S4, W4 nach Bedarf | offen |
+| 6 Kann | W4 Unterordner, E2 Einbettungen aus dem Intranet, E3 Firmenschriften, L3 interner Bibliothekskatalog, I3 Kommandozeilen-Tool, P2 Folien-Editor und Layouts, P3 Referentenansicht, P4 Fernbedienung, P5 Animationen, P6 Live-Präsentation (S4 seit Phase 1) | umgesetzt |
 
 Das Datenmodell enthält von Anfang an Workspaces, damit W10 ohne Umbau möglich bleibt.
 
@@ -92,6 +92,26 @@ Bekannte Grenzen:
 - Benachrichtigungen bei Freigaben an große Gruppen (über 50 bekannte Personen) entfallen, um Massenmails zu vermeiden.
 - Wireframe zu Code braucht ein Modell mit Bildverständnis (`AI_VISION_MODEL`).
 
+### Phase 6 im Detail
+
+- **W4** Team-Collections bis fünf Ebenen tief; Zugriff gilt für alles darin, Unterordner haben zusätzlich eigene Freigaben. Baum in der Seitenleiste, Pfad über dem Titel, Unterordner über den Szenen; Verschieben ohne Zyklen; Papierkorb, Suche und Export (Ordnerpfade im ZIP) folgen dem Baum.
+- **E2** „Verwaltung → Editor“: erlaubte Intranet-Hosts für Web-Einbettungen in Szenen, externe Dienste schaltbar (Standard aus). Editor und Content-Security-Policy folgen der Liste ohne neuen Build ([Betrieb](./betrieb.md#einbettungen-in-szenen)).
+- **E3** Firmenschriften (TTF, OTF, WOFF2) für alle im Schriftmenü, eingebettet in Exporte und in die Bilder der API ([Betrieb](./betrieb.md#firmenschriften)).
+- **L3** Katalog unter `/libraries` und über „Bibliotheken durchsuchen“: veröffentlichen (Datei oder eigene Bibliothek), Vorschau, Suche, mit einem Klick in die eigene oder eine Team-Bibliothek oder in den offenen Editor ([Betrieb](./betrieb.md#bibliothekskatalog)).
+- **I3** Szenen und Frames als SVG oder PNG über die API, gerendert auf dem Server; Kommandozeilen-Tool `excalidraw.mjs` zum Auflisten, Exportieren, Importieren und Rendern ([API](./api.md#bilder-und-kommandozeile)).
+- **P2** Neue Folie mit Layouts (Titel und Inhalt, Titelfolie, zwei Spalten, Abschnitt, leer), auch mit Alt+A; Umsortieren per Ziehen.
+- **P3** Sprechernotizen je Folie; Referentenansicht in einem zweiten Fenster mit aktueller und nächster Folie, Notizen (Links klickbar) und Zeit.
+- **P4** Fernbedienung per QR-Code auf dem Smartphone: weiterschalten, Notizen und Zeit sehen.
+- **P5** Einblendungen: ausgewählte Elemente einer Folie erscheinen Klick für Klick (nur auf dem Bildschirm der vortragenden Person ausgeblendet; die Szene bleibt, wie sie ist).
+- **P6** Live-Präsentation: Link für das Publikum, Warteraum bis zum Start, Folien im eigenen Browser, Emoji-Reaktionen und Handzeichen mit Namen bei der vortragenden Person.
+
+Bekannte Grenzen:
+
+- Das Publikum einer Live-Präsentation sieht Bilder der Folien (keine Live-Zeichenfläche); Laserpointer und Änderungen während des Vortrags erscheinen erst mit der nächsten Folie oder Einblendung.
+- Einblendungen gelten beim Präsentieren, nicht im PDF- und PowerPoint-Export (dort erscheint jede Folie vollständig).
+- Die Fernbedienung braucht ein Smartphone mit Zugang zur App (Firmennetz oder VPN).
+- Eine entfernte Firmenschrift fehlt danach auch in älteren Zeichnungen (Ersatzschrift).
+
 ## Priorisierung
 
 | ID | Funktion | Priorität |
@@ -107,7 +127,7 @@ Bekannte Grenzen:
 | W1 | Dashboard | Muss |
 | W2 | Unbegrenzte Szenen auf dem Server | Muss |
 | W3 | Collections | Muss |
-| W4 | Unterordner | Kann |
+| W4 | Unterordner | Kann (Phase 6) |
 | W5 | Papierkorb | Soll |
 | W6 | Suche über alle Szenen | Soll |
 | W7 | Versionsverlauf | Soll |
@@ -125,25 +145,25 @@ Bekannte Grenzen:
 | Z4 | Spotlight | Soll |
 | Z5 | Sprachkanal und Bildschirmfreigabe | Gestrichen |
 | P1 | Präsentationsmodus | Soll |
-| P2 | Folien-Editor und Layouts | Kann |
-| P3 | Referentenansicht mit Notizen | Kann |
-| P4 | Fernbedienung per Smartphone | Kann |
-| P5 | Animationen | Kann |
-| P6 | Live-Präsentation fürs Publikum | Kann |
+| P2 | Folien-Editor und Layouts | Kann (Phase 6) |
+| P3 | Referentenansicht mit Notizen | Kann (Phase 6) |
+| P4 | Fernbedienung per Smartphone | Kann (Phase 6) |
+| P5 | Animationen | Kann (Phase 6) |
+| P6 | Live-Präsentation fürs Publikum | Kann (Phase 6) |
 | P7 | Export als PDF und PowerPoint | Soll |
 | K1 | KI mit internem Sprachmodell | Soll |
 | K2 | KI-Steuerung und Kontingente | Soll |
 | E1 | Bilder in voller Auflösung | Muss |
-| E2 | Einbettungen aus dem Intranet | Kann |
-| E3 | Firmenschriften | Kann |
+| E2 | Einbettungen aus dem Intranet | Kann (Phase 6) |
+| E3 | Firmenschriften | Kann (Phase 6) |
 | E4 | PDF-Import | Soll |
 | E5 | Formatierter Text | Gestrichen |
 | L1 | Persönliche Bibliothek auf dem Server | Soll |
 | L2 | Team- und Firmenbibliotheken | Soll |
-| L3 | Interner Bibliothekskatalog | Kann |
+| L3 | Interner Bibliothekskatalog | Kann (Phase 6) |
 | I1 | REST-API | Muss |
 | I2 | MCP-Server für KI-Assistenten | Muss |
-| I3 | Kommandozeilen-Tool | Kann |
+| I3 | Kommandozeilen-Tool | Kann (Phase 6) |
 | I4 | Confluence und Jira | Gestrichen |
 | I5 | GitLab und GitHub | Gestrichen |
 | S1 | Sicherheits-Grundschutz | Muss |

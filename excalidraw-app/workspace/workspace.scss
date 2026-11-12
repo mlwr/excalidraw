@@ -1838,3 +1838,386 @@ body.ws-presenting {
     padding-top: 0.4rem;
   }
 }
+
+// --- Phase 6: presentations (P2–P6) ---------------------------------------------
+
+.ws-present__steps {
+  color: var(--ws-muted);
+}
+
+.ws-slides {
+  &__new {
+    display: flex;
+    gap: 0.4rem;
+    margin: 0.25rem 0 0.75rem;
+
+    .ws-input {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+
+  &__item.is-drop-target {
+    outline: 2px dashed var(--ws-primary);
+    outline-offset: 2px;
+  }
+
+  &__more {
+    padding: 0;
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  &__details {
+    display: grid;
+    gap: 0.4rem;
+    margin-top: 0.35rem;
+  }
+
+  &__notes {
+    width: 100%;
+    resize: vertical;
+    font-size: 0.85rem;
+  }
+
+  &__notes-text {
+    margin: 0;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+  }
+
+  &__steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.6rem;
+    font-size: 0.85rem;
+
+    .ws-link {
+      padding: 0;
+      border: none;
+      background: transparent;
+      font: inherit;
+      cursor: pointer;
+    }
+  }
+}
+
+.ws-present-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 60;
+  display: grid;
+  gap: 0.6rem;
+  width: min(26rem, calc(100vw - 2rem));
+  padding: 1.25rem;
+  border: 1px solid var(--ws-border);
+  border-radius: 14px;
+  background: var(--ws-bg);
+  box-shadow: var(--ws-shadow);
+  transform: translate(-50%, -50%);
+
+  h2 {
+    margin: 0;
+    font-size: 1.15rem;
+  }
+
+  p {
+    margin: 0;
+  }
+
+  &__qr {
+    justify-self: center;
+    width: 220px;
+    height: 220px;
+    background: #fff;
+    image-rendering: pixelated;
+  }
+
+  &__hands {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+
+    li {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+
+    .ws-link {
+      padding: 0;
+      border: none;
+      background: transparent;
+      font: inherit;
+      cursor: pointer;
+    }
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .ws-present__button {
+    border: 1px solid var(--ws-border);
+  }
+}
+
+.ws-present-reactions {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  overflow: hidden;
+  pointer-events: none;
+
+  span {
+    position: absolute;
+    bottom: 4rem;
+    font-size: 2.5rem;
+    animation: ws-reaction-rise 3s ease-out forwards;
+  }
+}
+
+@keyframes ws-reaction-rise {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-60vh);
+  }
+}
+
+// P3: presenter window
+.ws-presenter {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--ws-bg);
+  color: var(--ws-text);
+
+  &__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--ws-border);
+  }
+
+  &__time {
+    font-size: 1.6rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+  }
+
+  &__main {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr);
+    flex: 1;
+    gap: 1rem;
+    min-height: 0;
+    padding: 1rem;
+  }
+
+  &__current {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    border-radius: 10px;
+    background: #fff;
+
+    img {
+      max-width: 100%;
+      max-height: 100%;
+    }
+  }
+
+  &__side {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-height: 0;
+    overflow: auto;
+
+    h2 {
+      margin: 0 0 0.35rem;
+      font-size: 0.95rem;
+    }
+
+    img {
+      width: 100%;
+      border-radius: 8px;
+      background: #fff;
+    }
+  }
+
+  &__notes p {
+    margin: 0;
+    font-size: 1.15rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  &__controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: auto;
+
+    .ws-present__button {
+      border: 1px solid var(--ws-border);
+    }
+  }
+
+  &__empty {
+    margin: auto;
+    padding: 2rem;
+    text-align: center;
+  }
+
+  @media (max-width: 760px) {
+    &__main {
+      grid-template-columns: 1fr;
+    }
+  }
+}
+
+// P4: phone remote
+.ws-remote {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 100vh;
+  padding: 1rem;
+  background: var(--ws-bg);
+  color: var(--ws-text);
+
+  &__bar {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__title {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 700;
+  }
+
+  &__message {
+    margin: auto 0;
+    text-align: center;
+  }
+
+  &__buttons {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 0.75rem;
+
+    button {
+      min-height: 7rem;
+      border: 1px solid var(--ws-border);
+      border-radius: 16px;
+      background: var(--ws-surface);
+      color: var(--ws-text);
+      font-size: 3rem;
+      touch-action: manipulation;
+      cursor: pointer;
+
+      &:active {
+        background: var(--ws-primary-soft);
+      }
+    }
+  }
+
+  &__notes {
+    font-size: 1.1rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
+
+// P6: audience
+.ws-live {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--ws-bg);
+  color: var(--ws-text);
+
+  &__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem 1rem;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--ws-border);
+  }
+
+  &__stage {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    padding: 1rem;
+
+    img {
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: var(--ws-shadow);
+    }
+  }
+
+  &__message {
+    font-size: 1.2rem;
+    text-align: center;
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.6rem 1rem 1rem;
+
+    button {
+      min-width: 2.75rem;
+      height: 2.75rem;
+      padding: 0 0.6rem;
+      border: 1px solid var(--ws-border);
+      border-radius: 999px;
+      background: var(--ws-surface);
+      color: var(--ws-text);
+      font: inherit;
+      font-size: 1.3rem;
+      cursor: pointer;
+
+      &.is-sent {
+        transform: scale(1.2);
+      }
+
+      &.is-active {
+        background: var(--ws-primary-soft);
+        color: var(--ws-primary);
+      }
+    }
+  }
+
+  &__hand {
+    font-size: 1rem !important;
+  }
+}

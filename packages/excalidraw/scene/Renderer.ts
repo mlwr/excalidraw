@@ -39,6 +39,17 @@ type GetRenderableElementsOpts = {
   frameToHighlight: AppState["frameToHighlight"];
 };
 
+// Intranet fork (P5): elements left out of this editor's canvas only, e.g.
+// while a presentation reveals a slide step by step. The scene, and what
+// collaborators see, stays as it is.
+let locallyHidden: ReadonlySet<string> = new Set();
+let locallyHiddenNonce = 0;
+
+export const setLocallyHiddenElements = (ids: Iterable<string>) => {
+  locallyHidden = new Set(ids);
+  locallyHiddenNonce++;
+};
+
 export class Renderer {
   private scene: Scene;
 
@@ -252,7 +263,10 @@ export class Renderer {
     const newElementCanvasElement = newElement?.frameId ? null : newElement;
 
     for (const element of elements) {
-      if (newElementCanvasElement?.id === element.id) {
+      if (
+        newElementCanvasElement?.id === element.id ||
+        locallyHidden.has(element.id)
+      ) {
         continue;
       }
 
@@ -370,7 +384,7 @@ export class Renderer {
       newElement?.frameId || isTextElement(newElement)
         ? `:${newElement.versionNonce}`
         : ""
-    }`;
+    }${locallyHidden.size ? `:h${locallyHiddenNonce}` : ""}`;
 
     const ret = this._getRenderableElements({
       canvasNonce,

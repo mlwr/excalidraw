@@ -16,6 +16,9 @@ export type AppRoute =
   | { kind: "readLink"; token: string }
   | { kind: "admin" }
   | { kind: "libraryCatalog" }
+  | { kind: "presenter"; channel: string }
+  | { kind: "remote"; key: string }
+  | { kind: "live"; id: string }
   | { kind: "embed"; token: string }
   | { kind: "embedLogin" };
 
@@ -46,6 +49,19 @@ export const getRoute = (location: Location = window.location): AppRoute => {
   }
   if (path === LIBRARY_CATALOG_PATH) {
     return { kind: "libraryCatalog" };
+  }
+  // Phase 6 presentations: presenter window (P3), phone remote (P4),
+  // live audience (P6); keys travel in the fragment, never to the server
+  const key = location.hash.slice(1);
+  if (path === "/presenter" && /^[A-Za-z0-9_-]{22,64}$/.test(key)) {
+    return { kind: "presenter", channel: key };
+  }
+  if (path === "/remote" && /^[A-Za-z0-9_-]{22,64}$/.test(key)) {
+    return { kind: "remote", key };
+  }
+  const live = path.match(/^\/live\/([A-Za-z0-9_-]{22})$/);
+  if (live) {
+    return { kind: "live", id: live[1] };
   }
   const embed = path.match(/^\/embed\/([a-zA-Z0-9_-]{16,64})$/);
   if (embed) {

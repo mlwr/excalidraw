@@ -63,12 +63,17 @@ Ein Pod liefert die gebaute App aus, beantwortet die API unter `/api` und betrei
 | `/local` | Lokale Zeichnung wie auf excalidraw.com, nur im Browser gespeichert; über das Menü „Im Workspace speichern“ wird daraus eine Szene |
 | `/admin` | Verwaltung für App-Admins (Workspaces, Personen, Audit-Log, KI, Branding, Kennzahlen) und Workspace-Admins (ihre Workspaces) |
 | `/embed/<token>` | In Wiki- oder Intranetseiten eingebettete Szene (Nur-Ansicht, aktualisiert sich selbst) |
+| `/libraries` | Bibliothekskatalog des Unternehmens: Bibliotheken veröffentlichen, durchsuchen, mit einem Klick übernehmen (auch über „Bibliotheken durchsuchen“ im Editor) |
+| `/presenter#…` | Referentenansicht einer laufenden Präsentation (öffnet sich aus der Präsentation) |
+| `/remote#…` | Fernbedienung auf dem Smartphone (QR-Code in der Präsentation) |
+| `/live/<id>` | Live-Präsentation für das Publikum (Link aus der Präsentation, mit Anmeldung) |
 | `/#room=…`, `/#json=…` | Ad-hoc-Live-Sitzung bzw. Teilen-Link mit Ende-zu-Ende-Verschlüsselung (wie bisher) |
 
 Rechte:
 
 - **Meine Szenen** sieht nur die Person selbst, solange sie eine Szene nicht teilt.
 - **Team-Collections** legt jede angemeldete Person an. Eingetragene Personen oder Keycloak-Gruppen erhalten „Kann ansehen“, „Kann bearbeiten“ oder „Verwaltet“. Eine Freigabe an eine Gruppe gilt auch für ihre Untergruppen (`/IT` umfasst `/IT/Architektur`). Admins (`excalidraw-admin`) sehen und verwalten alle Team-Collections.
+- **Unterordner**: Team-Collections lassen sich bis zu fünf Ebenen tief verschachteln (z. B. Abteilung › Projekt › Thema). Zugriff auf einen Ordner gilt auch für alle Ordner darin; ein Unterordner kann zusätzlich eigene Personen oder Gruppen haben. Unterordner legt an, wer im Ordner darüber bearbeiten darf; verschieben darf, wer den Ordner verwaltet. Gelöscht wird ein Ordner erst, wenn er leer ist.
 - **Einzelne Szenen** lassen sich zusätzlich an Personen oder Gruppen freigeben, ohne die Collection zu öffnen.
 - **Kommentare** schreibt jede Person, die die Szene sehen darf, auch mit Leserecht. Erledigen darf, wer bearbeiten darf, und wer den Kommentar begonnen hat; löschen darf die Verfasserin bzw. der Verfasser und wer die Szene verwaltet.
 - **Workspaces**: Der allgemeine Workspace ist für alle offen. Weitere Workspaces legen App-Admins an und tragen Mitglieder (Personen oder Keycloak-Gruppen) und Workspace-Admins ein. Workspace-Admins verwalten alle Team-Collections, Mitglieder und Richtlinien ihres Workspaces (Nur-Lese-Links, direktes Teilen, wer Collections anlegt, wer exportiert, Frist im Papierkorb). Wer kein Mitglied ist, sieht dort nur, was mit ihm geteilt wurde.
@@ -77,14 +82,20 @@ Rechte:
 
 Im Editor außerdem:
 
-- **Präsentieren**: Jeder Frame ist eine Folie. Hauptmenü „Präsentieren“ oder in der Seitenleiste der Tab „Folien“ (Reihenfolge ändern, ab einer Folie starten). Pfeiltasten oder Leertaste blättern, L schaltet den Laserpointer, Esc beendet.
+- **Präsentieren**: Jeder Frame ist eine Folie. Hauptmenü „Präsentieren“ oder in der Seitenleiste der Tab „Folien“: neue Folie mit Layout (Titel und Inhalt, Titelfolie, zwei Spalten, Abschnitt, leer; auch mit Alt+A), Reihenfolge per Ziehen oder Pfeilen ändern, Sprechernotizen, Einblendungen (ausgewählte Elemente erscheinen erst beim nächsten Klick), ab einer Folie starten. Pfeiltasten oder Leertaste blättern (auch durch die Einblendungen), L schaltet den Laserpointer, Esc beendet.
+  - „Referentenansicht“ öffnet ein zweites Fenster mit aktueller und nächster Folie, Notizen (Links klickbar) und Uhr.
+  - „Fernbedienung“ zeigt einen QR-Code: das Smartphone (im Firmennetz oder VPN, mit Anmeldung) schaltet weiter und zeigt die Notizen.
+  - „Live“ liefert einen Link für das Publikum: Zuschauende sehen die Folien im eigenen Browser (vor dem Start einen Warteraum), reagieren mit Emojis und melden sich per Handzeichen; die Präsentation zeigt Reaktionen und Meldungen mit Namen.
 - **Spotlight**: In einer Live-Sitzung oben rechts „Spotlight“: Alle anderen folgen deiner Ansicht, beim Präsentieren deinen Folien. Wer selbst schauen will, verlässt es mit einem Klick.
 - **Export als PDF oder PowerPoint**: Hauptmenü; jede Folie wird eine Seite (ohne Frames die ganze Zeichnung).
 - **PDF importieren**: Hauptmenü; jede Seite kommt als Bild in einem eigenen Frame in die Szene, zum Annotieren oder Präsentieren. Das PDF verlässt den Browser nicht.
-- **Bibliotheken**: Die eigene Bibliothek liegt jetzt auf dem Server und ist auf jedem Gerät da. Team-Bibliotheken (je Collection, gepflegt von deren Bearbeitenden) und Firmenbibliotheken (je Workspace, gepflegt von dessen Admins) stehen in der Seitenleiste im eigenen Tab.
+- **Bibliotheken**: Die eigene Bibliothek liegt jetzt auf dem Server und ist auf jedem Gerät da. Team-Bibliotheken (je Collection, gepflegt von deren Bearbeitenden) und Firmenbibliotheken (je Workspace, gepflegt von dessen Admins) stehen in der Seitenleiste im eigenen Tab. „Bibliotheken durchsuchen“ öffnet den Katalog des Unternehmens; eine Bibliothek daraus landet mit einem Klick in der eigenen Bibliothek.
+- **Firmenschriften**: Schriften, die die App-Admins hochgeladen haben, stehen im Schriftmenü und werden beim Export eingebettet.
+- **Web-Einbettungen**: Das Werkzeug „Web-Einbettung“ zeigt Intranetseiten (Wiki, Dashboards, GitLab) in der Szene, soweit die App-Admins deren Hosts erlaubt haben; externe Dienste wie YouTube nur, wenn eingeschaltet.
 - **Benachrichtigungen**: Die Glocke oben zeigt Erwähnungen, Antworten auf Kommentare und neue Freigaben; mit eingerichtetem Mailserver kommen ungelesene auch per E-Mail (einzeln abbestellbar).
 - **KI** (wenn eingerichtet): Text zu Diagramm und Wireframe zu Code laufen über euer eigenes Sprachmodell.
 - **Einbetten**: Im Teilen-Dialog „In Wiki und Intranet einbetten“ liefert den iframe-Code.
+- **Kommandozeile und Bilder**: Im Dialog „API-Tokens“ der Übersicht gibt es das Kommandozeilen-Tool `excalidraw.mjs` (Szenen auflisten, exportieren, importieren, als SVG oder PNG rendern) und die Bild-Adresse einer Szene für Doku-Pipelines ([API](./api.md#bilder-und-kommandozeile)).
 
 Kommentieren: im Editor oben rechts das Sprechblasen-Symbol, dann „Kommentar hinzufügen“ und auf die Stelle klicken. Liegt dort ein Element, hängt der Kommentar daran und wandert mit, wenn es verschoben wird.
 
